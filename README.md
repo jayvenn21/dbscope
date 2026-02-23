@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/jayvenn21/dbscope/releases"><img src="https://img.shields.io/github/v/release/jayvenn21/dbscope" alt="Release"></a>
   <img src="https://img.shields.io/badge/status-active-brightgreen" alt="Status">
   <img src="https://img.shields.io/badge/postgres-supported-blue" alt="Postgres">
   <img src="https://img.shields.io/badge/read--only-safe-success" alt="Read Only">
