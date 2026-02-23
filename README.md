@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="dbscopeimg.png" width="160" alt="dbscope logo">
+  <img src="dbscope-logo-cropped.png" width="65%" alt="dbscope logo">
 </p>
-
-<h1 align="center">dbscope</h1>
 
 <p align="center">
   Universal relational schema intelligence

@@ -24,3 +24,6 @@ Cargo.lock
 .DS_Store
 *.swp
 *.bak
+
+# Old logo (replaced by dbscope-logo-cropped.png)
+dbscopeimg.png
