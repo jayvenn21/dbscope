@@ -1,0 +1,375 @@
+//! Compute FK dependency depth, orphan detection, cycles, centrality, risk score.
+
+use petgraph::algo::is_cyclic_directed;
+use petgraph::graph::NodeIndex;
+use petgraph::visit::{EdgeRef, IntoNeighbors, Reversed};
+use std::collections::{HashMap, HashSet, VecDeque};
+
+use crate::core::{DatabaseGraph, SchemaEdge, SchemaNode};
+
+/// Explainable breakdown of table risk score. Industry-credible: weighted components.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RiskScoreBreakdown {
+    /// FK depth contribution (max 0.4): (depth_out + depth_in) / 20, capped.
+    pub depth_contrib: f64,
+    /// Cycle contribution (0 or 0.3): in a circular dependency.
+    pub cycle_contrib: f64,
+    /// Centrality contribution (max 0.3): (centrality_in + centrality_out) / 30, capped.
+    pub centrality_contrib: f64,
+    /// Human-readable formula for this table.
+    pub formula: String,
+}
+
+/// Per-table metrics for reporting.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TableMetrics {
+    pub qualified_name: String,
+    pub fk_depth_out: u32,   // max path length following outgoing FKs
+    pub fk_depth_in: u32,    // max path length following incoming FKs
+    pub is_orphan: bool,     // no FK in and no FK out
+    pub in_cycle: bool,
+    pub centrality_out: u32, // number of tables this table references (out degree)
+    pub centrality_in: u32,  // number of tables that reference this (in degree)
+    pub risk_score: f64,
+    /// How the risk score was computed (explainable scoring).
+    pub risk_breakdown: Option<RiskScoreBreakdown>,
+}
+
+/// Risk level for display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum TableRisk {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl TableRisk {
+    pub fn from_score(score: f64) -> Self {
+        if score >= 0.75 {
+            TableRisk::Critical
+        } else if score >= 0.5 {
+            TableRisk::High
+        } else if score >= 0.25 {
+            TableRisk::Medium
+        } else {
+            TableRisk::Low
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            TableRisk::Low => "Low",
+            TableRisk::Medium => "Medium",
+            TableRisk::High => "High",
+            TableRisk::Critical => "Critical",
+        }
+    }
+}
+
+/// Build a subgraph of only table nodes and FK edges for depth/cycle/centrality.
+fn fk_table_graph(graph: &DatabaseGraph) -> (petgraph::Graph<(), ()>, HashMap<NodeIndex, NodeIndex>) {
+    use petgraph::graph::Graph;
+    let mut g: Graph<(), ()> = Graph::new();
+    let mut old_to_new: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+    for &idx in &graph.table_node_list {
+        let new_idx = g.add_node(());
+        old_to_new.insert(idx, new_idx);
+    }
+    for edge in graph.graph.edge_references() {
+        let w: &SchemaEdge = edge.weight();
+        if matches!(w, SchemaEdge::ForeignKey { .. }) {
+            if let (Some(&a), Some(&b)) = (old_to_new.get(&edge.source()), old_to_new.get(&edge.target())) {
+                g.add_edge(a, b, ());
+            }
+        }
+    }
+    (g, old_to_new)
+}
+
+/// Max distance (depth) following outgoing FK edges from `start`, BFS.
+fn max_depth_out(graph: &DatabaseGraph, start: NodeIndex) -> u32 {
+    let (fk_graph, old_to_new) = fk_table_graph(graph);
+    let start_new = match old_to_new.get(&start) {
+        Some(&n) => n,
+        None => return 0,
+    };
+    let mut dist: HashMap<petgraph::graph::NodeIndex, u32> = HashMap::new();
+    dist.insert(start_new, 0);
+    let mut queue = VecDeque::new();
+    queue.push_back(start_new);
+    while let Some(n) = queue.pop_front() {
+        let d = dist[&n];
+        for neighbor in fk_graph.neighbors(n) {
+            if !dist.contains_key(&neighbor) {
+                dist.insert(neighbor, d + 1);
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    dist.values().copied().max().unwrap_or(0)
+}
+
+/// Max distance following incoming FK edges from `start`, BFS on reversed graph.
+fn max_depth_in(graph: &DatabaseGraph, start: NodeIndex) -> u32 {
+    let (fk_graph, old_to_new) = fk_table_graph(graph);
+    let start_new = match old_to_new.get(&start) {
+        Some(&n) => n,
+        None => return 0,
+    };
+    let rev = Reversed(&fk_graph);
+    let mut dist: HashMap<petgraph::graph::NodeIndex, u32> = HashMap::new();
+    dist.insert(start_new, 0);
+    let mut queue = VecDeque::new();
+    queue.push_back(start_new);
+    while let Some(n) = queue.pop_front() {
+        let d = dist[&n];
+        for neighbor in rev.neighbors(n) {
+            if !dist.contains_key(&neighbor) {
+                dist.insert(neighbor, d + 1);
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    dist.values().copied().max().unwrap_or(0)
+}
+
+/// Find all table node indices that participate in a cycle (in the FK table graph).
+fn tables_in_cycles(graph: &DatabaseGraph) -> HashSet<NodeIndex> {
+    let (fk_graph, old_to_new) = fk_table_graph(graph);
+    if !is_cyclic_directed(&fk_graph) {
+        return HashSet::new();
+    }
+    let scc = petgraph::algo::kosaraju_scc(&fk_graph);
+    let new_to_old: HashMap<NodeIndex, NodeIndex> = old_to_new.iter().map(|(k, v)| (*v, *k)).collect();
+    let mut in_cycle = HashSet::new();
+    for comp in scc {
+        if comp.len() > 1 {
+            for &new_idx in &comp {
+                if let Some(&old_idx) = new_to_old.get(&new_idx) {
+                    in_cycle.insert(old_idx);
+                }
+            }
+        }
+    }
+    in_cycle
+}
+
+/// Compute centrality (in/out degree) for table nodes in the FK graph.
+fn centrality(graph: &DatabaseGraph, table_idx: NodeIndex) -> (u32, u32) {
+    let out = graph.fk_out_neighbors(table_idx).len() as u32;
+    let inc = graph.fk_in_neighbors(table_idx).len() as u32;
+    (inc, out)
+}
+
+/// Risk score in [0, 1]. Higher = riskier.
+/// Factors: FK depth (more dependencies = more impact), cycle membership,
+/// centrality (more connections = more impact), orphan (low risk).
+/// Weights for table risk (explainable). Sum of contribs capped at 1.0.
+const DEPTH_WEIGHT_CAP: f64 = 0.4;
+const CYCLE_WEIGHT: f64 = 0.3;
+const CENTRALITY_WEIGHT_CAP: f64 = 0.3;
+
+fn risk_score_with_breakdown(
+    fk_depth_out: u32,
+    fk_depth_in: u32,
+    in_cycle: bool,
+    centrality_in: u32,
+    centrality_out: u32,
+    is_orphan: bool,
+) -> (f64, Option<RiskScoreBreakdown>) {
+    if is_orphan {
+        return (
+            0.0,
+            Some(RiskScoreBreakdown {
+                depth_contrib: 0.0,
+                cycle_contrib: 0.0,
+                centrality_contrib: 0.0,
+                formula: "orphan (no FK in/out) → risk = 0".to_string(),
+            }),
+        );
+    }
+    let depth_contrib = ((fk_depth_out + fk_depth_in) as f64 / 20.0).min(DEPTH_WEIGHT_CAP);
+    let cycle_contrib = if in_cycle { CYCLE_WEIGHT } else { 0.0 };
+    let centrality_contrib = ((centrality_in + centrality_out) as f64 / 30.0).min(CENTRALITY_WEIGHT_CAP);
+    let raw = (depth_contrib + cycle_contrib + centrality_contrib).min(1.0);
+    let formula = format!(
+        "risk = depth({:.2}) + cycle({:.2}) + centrality({:.2}) = {:.2}",
+        depth_contrib, cycle_contrib, centrality_contrib, raw
+    );
+    let breakdown = RiskScoreBreakdown {
+        depth_contrib,
+        cycle_contrib,
+        centrality_contrib,
+        formula,
+    };
+    (raw, Some(breakdown))
+}
+
+/// Compute metrics for every table in the graph.
+pub fn compute_all_metrics(graph: &DatabaseGraph) -> Vec<TableMetrics> {
+    let in_cycle_set = tables_in_cycles(graph);
+    let mut results = Vec::with_capacity(graph.table_count());
+    for &table_idx in &graph.table_node_list {
+        let qualified_name = match &graph.graph[table_idx] {
+            SchemaNode::Table(t) => t.qualified_name(),
+            _ => continue,
+        };
+        let fk_out = graph.fk_out_neighbors(table_idx).len();
+        let fk_in = graph.fk_in_neighbors(table_idx).len();
+        let is_orphan = fk_out == 0 && fk_in == 0;
+        let fk_depth_out = max_depth_out(graph, table_idx);
+        let fk_depth_in = max_depth_in(graph, table_idx);
+        let in_cycle = in_cycle_set.contains(&table_idx);
+        let (centrality_in, centrality_out) = centrality(graph, table_idx);
+        let (risk_score, risk_breakdown) = risk_score_with_breakdown(
+            fk_depth_out,
+            fk_depth_in,
+            in_cycle,
+            centrality_in,
+            centrality_out,
+            is_orphan,
+        );
+        results.push(TableMetrics {
+            qualified_name,
+            fk_depth_out,
+            fk_depth_in,
+            is_orphan,
+            in_cycle,
+            centrality_out,
+            centrality_in,
+            risk_score,
+            risk_breakdown,
+        });
+    }
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::analysis::{compute_all_metrics, TableRisk};
+    use crate::core::{DatabaseGraph, ForeignKeyRef, RawSchema, TableMeta};
+
+    fn fixture_raw_schema() -> RawSchema {
+        RawSchema {
+            tables: vec![
+                TableMeta { schema_name: "public".into(), table_name: "users".into() },
+                TableMeta { schema_name: "public".into(), table_name: "posts".into() },
+                TableMeta { schema_name: "public".into(), table_name: "comments".into() },
+                TableMeta { schema_name: "public".into(), table_name: "standalone".into() },
+            ],
+            views: vec![],
+            materialized_views: vec![],
+            columns: vec![],
+            indexes: vec![],
+            constraints: vec![],
+            foreign_keys: vec![
+                ForeignKeyRef {
+                    name: "posts_user_id_fkey".into(),
+                    from_schema: "public".into(),
+                    from_table: "posts".into(),
+                    from_columns: vec!["user_id".into()],
+                    to_schema: "public".into(),
+                    to_table: "users".into(),
+                    to_columns: vec!["id".into()],
+                },
+                ForeignKeyRef {
+                    name: "comments_post_id_fkey".into(),
+                    from_schema: "public".into(),
+                    from_table: "comments".into(),
+                    from_columns: vec!["post_id".into()],
+                    to_schema: "public".into(),
+                    to_table: "posts".into(),
+                    to_columns: vec!["id".into()],
+                },
+            ],
+            engine_metadata: None,
+        }
+    }
+
+    #[test]
+    fn metrics_orphan_has_zero_risk_and_flagged() {
+        let graph = DatabaseGraph::from_raw_schema(fixture_raw_schema());
+        let metrics = compute_all_metrics(&graph);
+        let standalone = metrics.iter().find(|m| m.qualified_name == "public.standalone").unwrap();
+        assert!(standalone.is_orphan);
+        assert_eq!(standalone.risk_score, 0.0);
+        assert!(!standalone.in_cycle);
+    }
+
+    #[test]
+    fn metrics_fk_chain_has_depths_and_centrality() {
+        let graph = DatabaseGraph::from_raw_schema(fixture_raw_schema());
+        let metrics = compute_all_metrics(&graph);
+        // comments -> posts -> users: comments has out-depth 2 (comments, posts, users)
+        let comments = metrics.iter().find(|m| m.qualified_name == "public.comments").unwrap();
+        assert_eq!(comments.fk_depth_out, 2);
+        assert_eq!(comments.centrality_out, 1);
+        assert_eq!(comments.centrality_in, 0);
+        // users: only incoming FKs, so in-depth from users reaches posts and comments
+        let users = metrics.iter().find(|m| m.qualified_name == "public.users").unwrap();
+        assert_eq!(users.fk_depth_in, 2);
+        assert_eq!(users.centrality_in, 1);
+    }
+
+    #[test]
+    fn metrics_risk_levels() {
+        let graph = DatabaseGraph::from_raw_schema(fixture_raw_schema());
+        let metrics = compute_all_metrics(&graph);
+        assert_eq!(metrics.len(), 4);
+        let standalone = metrics.iter().find(|m| m.qualified_name == "public.standalone").unwrap();
+        assert_eq!(TableRisk::from_score(standalone.risk_score), TableRisk::Low);
+    }
+
+    #[test]
+    fn metrics_detect_cycle() {
+        // Cycle: a -> b -> c -> a
+        let raw = RawSchema {
+            tables: vec![
+                TableMeta { schema_name: "public".into(), table_name: "a".into() },
+                TableMeta { schema_name: "public".into(), table_name: "b".into() },
+                TableMeta { schema_name: "public".into(), table_name: "c".into() },
+            ],
+            views: vec![],
+            materialized_views: vec![],
+            columns: vec![],
+            indexes: vec![],
+            constraints: vec![],
+            foreign_keys: vec![
+                ForeignKeyRef {
+                    name: "b_a".into(),
+                    from_schema: "public".into(),
+                    from_table: "b".into(),
+                    from_columns: vec!["a_id".into()],
+                    to_schema: "public".into(),
+                    to_table: "a".into(),
+                    to_columns: vec!["id".into()],
+                },
+                ForeignKeyRef {
+                    name: "c_b".into(),
+                    from_schema: "public".into(),
+                    from_table: "c".into(),
+                    from_columns: vec!["b_id".into()],
+                    to_schema: "public".into(),
+                    to_table: "b".into(),
+                    to_columns: vec!["id".into()],
+                },
+                ForeignKeyRef {
+                    name: "a_c".into(),
+                    from_schema: "public".into(),
+                    from_table: "a".into(),
+                    from_columns: vec!["c_id".into()],
+                    to_schema: "public".into(),
+                    to_table: "c".into(),
+                    to_columns: vec!["id".into()],
+                },
+            ],
+            engine_metadata: None,
+        };
+        let graph = DatabaseGraph::from_raw_schema(raw);
+        let metrics = compute_all_metrics(&graph);
+        for m in &metrics {
+            assert!(m.in_cycle, "expected {} to be in cycle", m.qualified_name);
+        }
+    }
+}
