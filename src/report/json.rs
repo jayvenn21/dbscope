@@ -86,10 +86,10 @@ pub fn render<W: Write>(
     let overall_risk = if metrics.is_empty() {
         0.0
     } else {
-        metrics.iter().map(|m| m.risk_score).sum::<f64>() / metrics.len() as f64
+        metrics.iter().map(|m| m.display_risk()).sum::<f64>() / metrics.len() as f64
     };
-    let critical = metrics.iter().filter(|m| TableRisk::from_score(m.risk_score) == TableRisk::Critical).count();
-    let high = metrics.iter().filter(|m| TableRisk::from_score(m.risk_score) == TableRisk::High).count();
+    let critical = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::Critical).count();
+    let high = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::High).count();
 
     let usage_summary = usage.map(|u| UsageSummary {
         total_queries_parsed: u.total_queries_parsed,

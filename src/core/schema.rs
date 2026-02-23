@@ -61,6 +61,17 @@ pub struct ForeignKeyRef {
     pub to_columns: Vec<String>,
 }
 
+/// Per-table operational stats (e.g. from pg_stat_user_tables). Used for operational weighting.
+#[derive(Debug, Clone, Serialize)]
+pub struct TableStats {
+    pub schema_name: String,
+    pub table_name: String,
+    pub row_estimate: u64,
+    pub n_tup_ins: u64,
+    pub n_tup_upd: u64,
+    pub n_tup_del: u64,
+}
+
 /// Canonical database-agnostic schema: tables, views, materialized views, columns,
 /// indexes, constraints, FKs. All connectors produce this shape.
 #[derive(Debug, Clone, Default)]
@@ -74,6 +85,8 @@ pub struct RawSchema {
     pub indexes: Vec<IndexMeta>,
     pub constraints: Vec<ConstraintMeta>,
     pub foreign_keys: Vec<ForeignKeyRef>,
+    /// Optional per-table stats (row counts, write activity). Postgres: pg_stat_user_tables.
+    pub table_stats: Option<Vec<TableStats>>,
     /// Optional engine-specific data; core never reads this. Connectors may set it for tooling.
     pub engine_metadata: Option<serde_json::Value>,
 }

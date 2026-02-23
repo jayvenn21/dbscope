@@ -6,5 +6,5 @@ mod schema;
 
 pub use graph::{DatabaseGraph, SchemaEdge, SchemaNode};
 pub use schema::{
-    ColumnMeta, ConstraintMeta, ForeignKeyRef, IndexMeta, RawSchema, TableMeta,
+    ColumnMeta, ConstraintMeta, ForeignKeyRef, IndexMeta, RawSchema, TableMeta, TableStats,
 };

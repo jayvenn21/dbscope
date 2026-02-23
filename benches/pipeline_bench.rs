@@ -100,6 +100,7 @@ fn large_raw_schema() -> core::RawSchema {
         indexes,
         constraints: vec![],
         foreign_keys,
+        table_stats: None,
         engine_metadata: None,
     }
 }

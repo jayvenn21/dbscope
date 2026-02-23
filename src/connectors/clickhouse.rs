@@ -66,6 +66,7 @@ pub async fn extract_schema(connection_uri: &str) -> Result<RawSchema, Connector
         indexes,
         constraints: Vec::new(),
         foreign_keys: Vec::new(),
+        table_stats: None,
         engine_metadata: None,
     })
 }

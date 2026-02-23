@@ -26,7 +26,7 @@ pub async fn run_explain(
 async fn explain_risk(table_target: &str, schema_uri: &str) -> Result<(), anyhow::Error> {
     let raw: core::RawSchema = connectors::extract_schema(schema_uri).await?;
     let graph = core::DatabaseGraph::from_raw_schema(raw.clone());
-    let metrics = analysis::compute_all_metrics(&graph);
+    let metrics = analysis::compute_all_metrics_with_operational(&graph, Some(&raw), None);
 
     let normalized = if table_target.contains('.') {
         table_target.to_string()
@@ -39,9 +39,13 @@ async fn explain_risk(table_target: &str, schema_uri: &str) -> Result<(), anyhow
         .or_else(|| metrics.iter().find(|x| x.qualified_name.ends_with(table_target)))
         .ok_or_else(|| anyhow::anyhow!("Table not found: {}", table_target))?;
 
-    let risk = TableRisk::from_score(m.risk_score);
+    let display_risk = m.effective_risk.unwrap_or(m.risk_score);
+    let risk = TableRisk::from_score(display_risk);
     println!("Table: {}", m.qualified_name);
-    println!("Risk score: {:.2} ({})", m.risk_score, risk.label());
+    println!("Risk score: {:.2} ({})", display_risk, risk.label());
+    if m.effective_risk.is_some() {
+        println!("  (operational weighting applied: structural {:.2} × weight)", m.risk_score);
+    }
     println!();
     if let Some(ref b) = m.risk_breakdown {
         println!("How this score is computed:");

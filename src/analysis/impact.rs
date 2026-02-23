@@ -294,6 +294,7 @@ mod tests {
                     to_columns: vec!["id".into()],
                 },
             ],
+            table_stats: None,
             engine_metadata: None,
         }
     }

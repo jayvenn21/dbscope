@@ -6,5 +6,6 @@ pub mod cli;
 pub mod connectors;
 pub mod core;
 pub mod migration;
+pub mod policy;
 pub mod query_parser;
 pub mod report;

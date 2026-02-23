@@ -1,0 +1,14 @@
+# Example policy for dbscope ci and dbscope preview.
+# Copy to dbscope.policy.yaml and adjust. Use: dbscope ci --policy dbscope.policy.yaml
+
+# Fail if any table risk score exceeds this (0-1)
+max_table_risk: 0.5
+
+# Fail if any table is in a circular FK dependency
+no_cycles: false
+
+# Fail if any table is an orphan (no FK in/out)
+no_orphans: false
+
+# Fail if blast radius (impacted tables %) exceeds this (0-100). Used by preview.
+max_blast_radius_percent: 50

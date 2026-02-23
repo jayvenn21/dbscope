@@ -31,7 +31,7 @@ pub fn render<W: Write>(
     let risk_by_table: std::collections::HashMap<String, TableRisk> = metrics
         .map(|m| {
             m.iter()
-                .map(|t| (t.qualified_name.clone(), TableRisk::from_score(t.risk_score)))
+                .map(|t| (t.qualified_name.clone(), TableRisk::from_score(t.display_risk())))
                 .collect()
         })
         .unwrap_or_default();

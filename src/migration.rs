@@ -120,6 +120,7 @@ mod tests {
             indexes: vec![],
             constraints: vec![],
             foreign_keys: vec![],
+            table_stats: None,
             engine_metadata: None,
         };
         let stmts = parse_migration_sql("DROP TABLE IF EXISTS public.a;");

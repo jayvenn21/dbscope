@@ -7,7 +7,7 @@ use sqlx::PgPool;
 
 use crate::connectors::connector::{Connector, ConnectorError};
 use crate::core::{
-    ColumnMeta, ConstraintMeta, ForeignKeyRef, IndexMeta, RawSchema, TableMeta,
+    ColumnMeta, ConstraintMeta, ForeignKeyRef, IndexMeta, RawSchema, TableMeta, TableStats,
 };
 
 /// Postgres connector. Produces the same [RawSchema] as other engines.
@@ -44,6 +44,7 @@ async fn extract_schema_from_pool(pool: &PgPool) -> Result<RawSchema, sqlx::Erro
     let indexes = fetch_indexes(pool).await?;
     let constraints = fetch_constraints(pool).await?;
     let foreign_keys = fetch_foreign_keys(pool).await?;
+    let table_stats = fetch_table_stats(pool).await?;
 
     Ok(RawSchema {
         tables,
@@ -53,6 +54,7 @@ async fn extract_schema_from_pool(pool: &PgPool) -> Result<RawSchema, sqlx::Erro
         indexes,
         constraints,
         foreign_keys,
+        table_stats,
         engine_metadata: None,
     })
 }
@@ -262,4 +264,33 @@ async fn fetch_foreign_keys(pool: &PgPool) -> Result<Vec<ForeignKeyRef>, sqlx::E
         )
         .collect();
     Ok(foreign_keys)
+}
+
+async fn fetch_table_stats(pool: &PgPool) -> Result<Option<Vec<TableStats>>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (String, String, i64, i64, i64, i64)>(
+        r#"
+        SELECT schemaname, relname, n_live_tup, n_tup_ins, n_tup_upd, n_tup_del
+        FROM pg_stat_user_tables
+        WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+        ORDER BY schemaname, relname
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let table_stats: Vec<TableStats> = rows
+        .into_iter()
+        .map(|(schema_name, table_name, n_live_tup, n_tup_ins, n_tup_upd, n_tup_del)| {
+            TableStats {
+                schema_name,
+                table_name,
+                row_estimate: n_live_tup.max(0) as u64,
+                n_tup_ins: n_tup_ins.max(0) as u64,
+                n_tup_upd: n_tup_upd.max(0) as u64,
+                n_tup_del: n_tup_del.max(0) as u64,
+            }
+        })
+        .collect();
+
+    Ok(Some(table_stats))
 }

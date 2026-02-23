@@ -12,19 +12,32 @@ pub async fn run_summarize(
 ) -> Result<(), anyhow::Error> {
     let raw: core::RawSchema = connectors::extract_schema(schema_uri).await?;
     let graph = core::DatabaseGraph::from_raw_schema(raw.clone());
-    let metrics = analysis::compute_all_metrics(&graph);
+
+    let usage_report = if let Some(path) = query_log_path {
+        let queries = query_log::read_query_log(path)?;
+        let (usage, parsed_count) = analysis::build_usage_from_queries(&queries);
+        Some(analysis::compute_usage_report(&raw, &usage, parsed_count))
+    } else {
+        None
+    };
+    let metrics = analysis::compute_all_metrics_with_operational(
+        &graph,
+        Some(&raw),
+        usage_report.as_ref(),
+    );
 
     let total_tables = metrics.len();
     let total_columns = raw.columns.len();
     let total_fks = raw.foreign_keys.len();
     let orphans: Vec<_> = metrics.iter().filter(|m| m.is_orphan).collect();
     let in_cycle: Vec<_> = metrics.iter().filter(|m| m.in_cycle).collect();
-    let critical = metrics.iter().filter(|m| TableRisk::from_score(m.risk_score) == TableRisk::Critical).count();
-    let high = metrics.iter().filter(|m| TableRisk::from_score(m.risk_score) == TableRisk::High).count();
+    let risk_for = |m: &analysis::TableMetrics| m.effective_risk.unwrap_or(m.risk_score);
+    let critical = metrics.iter().filter(|m| TableRisk::from_score(risk_for(m)) == TableRisk::Critical).count();
+    let high = metrics.iter().filter(|m| TableRisk::from_score(risk_for(m)) == TableRisk::High).count();
     let overall_risk = if metrics.is_empty() {
         0.0
     } else {
-        metrics.iter().map(|m| m.risk_score).sum::<f64>() / metrics.len() as f64
+        metrics.iter().map(|m| risk_for(m)).sum::<f64>() / metrics.len() as f64
     };
 
     println!("## Schema summary");
@@ -46,13 +59,10 @@ pub async fn run_summarize(
         }
     }
 
-    if let Some(path) = query_log_path {
-        let queries = query_log::read_query_log(path)?;
-        let (usage, parsed_count) = analysis::build_usage_from_queries(&queries);
-        let report = analysis::compute_usage_report(&raw, &usage, parsed_count);
+    if let Some(ref report) = usage_report {
         println!();
         println!("## Query log summary");
-        println!("  Queries parsed: {}", parsed_count);
+        println!("  Queries parsed: {}", report.total_queries_parsed);
         println!("  Cold tables (never referenced): {}", report.cold_tables.len());
         for t in report.cold_tables.iter().take(5) {
             println!("    - {}", t.0);

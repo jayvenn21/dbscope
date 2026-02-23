@@ -29,6 +29,8 @@
   <a href="#why-dbscope">Why</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#commands">Commands</a> ·
+  <a href="#plan">plan</a> ·
+  <a href="#policy">Policy</a> ·
   <a href="#risk-model">Risk Model</a> ·
   <a href="#reports">Reports</a> ·
   <a href="#architecture">Architecture</a> ·
@@ -97,19 +99,46 @@ dbscope impact <TARGET> --schema <URI>
 dbscope impact <TARGET> --schema <URI> --query-log <FILE>
 ```
 
+### plan
+
+Safe refactor plan for dropping a table: lists FKs to drop first, then the DROP TABLE step. Read-only; apply changes manually.
+
+```bash
+dbscope plan drop public.users --schema <URI>
+dbscope plan drop users --schema <URI>
+```
+
+### preview
+
+Simulate a migration and report structural delta, risk delta, blast radius, and policy result. Exits 1 if policy is violated (when `--policy` is set).
+
+```bash
+dbscope preview <MIGRATION.sql> --schema <URI>
+dbscope preview <MIGRATION.sql> --schema <URI> --query-log <FILE> --policy dbscope.policy.yaml
+```
+
+Output: tables removed, FKs removed, new cycles, risk delta, % of schema graph impacted, observed queries broken; then Policy PASS/FAIL.
+
+| Option | Description |
+|--------|-------------|
+| `--query-log` | Count queries that reference removed tables (broken). |
+| `--policy` | YAML policy file. If set, exit 1 on violation. |
+
 ### ci
 
-Exit 1 if any table risk exceeds threshold. Optional `--migration` to simulate DDL.
+Exit 1 if any table risk exceeds threshold (or policy). Optional `--migration` to simulate DDL. With `--policy`, enforces `max_table_risk`, `no_cycles`, `no_orphans`.
 
 ```bash
 dbscope ci --schema <URI>
 dbscope ci --schema <URI> --threshold 0.5 --migration <FILE>
+dbscope ci --schema <URI> --policy dbscope.policy.yaml
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--threshold` | Fail if table risk &gt; this (0–1). Default: 0.5. |
+| `--threshold` | Fail if table risk &gt; this (0–1). Default: 0.5. Ignored if `--policy` is set. |
 | `--migration` | DDL file to simulate (DROP/CREATE TABLE, ALTER ADD FK). |
+| `--policy` | YAML file: `max_table_risk`, `no_cycles`, `no_orphans`, `max_blast_radius_percent`. |
 
 ### summarize
 
@@ -131,9 +160,15 @@ dbscope explain index-suggestion <TABLE> <COLUMN> --schema <URI> --query-log <FI
 
 ---
 
+## Policy
+
+Optional YAML policy for `ci` and `preview`: `max_table_risk`, `no_cycles`, `no_orphans`, `max_blast_radius_percent`. Copy `dbscope.policy.example.yaml` to `dbscope.policy.yaml` and use `--policy dbscope.policy.yaml`.
+
+---
+
 ## Risk Model
 
-All scores are deterministic. Full spec: **[docs/risk_model.md](docs/risk_model.md)**.
+All scores are deterministic. When connected to Postgres, **operational weighting** is applied when available: risk uses `pg_stat_user_tables` (row counts, insert/update/delete activity) and optionally query-log frequency. **effective_risk = structural_risk × operational_weight** (0.2–1.0). Reports and CI use effective risk when present. Full spec: **[docs/risk_model.md](docs/risk_model.md)**.
 
 **Table risk:** `risk = depth (max 0.4) + cycle (0.3 if in FK cycle) + centrality (max 0.3)`
 

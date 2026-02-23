@@ -15,22 +15,24 @@ pub async fn run_analyze(
 ) -> Result<(), anyhow::Error> {
     let raw: core::RawSchema = connectors::extract_schema(schema_uri).await?;
     let graph = core::DatabaseGraph::from_raw_schema(raw.clone());
-    let metrics = analysis::compute_all_metrics(&graph);
+
+    let usage_report = if let Some(path) = query_log_path {
+        let queries = query_log::read_query_log(path)?;
+        let (usage, parsed_count) = analysis::build_usage_from_queries(&queries);
+        Some(analysis::compute_usage_report(&raw, &usage, parsed_count))
+    } else {
+        None
+    };
+    let metrics = analysis::compute_all_metrics_with_operational(
+        &graph,
+        Some(&raw),
+        usage_report.as_ref(),
+    );
 
     let total_tables = graph.table_count();
     let total_columns = raw.columns.len();
     let total_indexes = raw.indexes.len();
     let total_fks = raw.foreign_keys.len();
-
-    // Optional: Phase 2 query log
-    let usage_report = if let Some(path) = query_log_path {
-        let queries = query_log::read_query_log(path)?;
-        let (usage, parsed_count) = analysis::build_usage_from_queries(&queries);
-        let report = analysis::compute_usage_report(&raw, &usage, parsed_count);
-        Some(report)
-    } else {
-        None
-    };
 
     // CLI summary
     eprintln!("dbscope analyze");
@@ -39,8 +41,9 @@ pub async fn run_analyze(
     eprintln!("  indexes:  {}", total_indexes);
     eprintln!("  FKs:      {}", total_fks);
     eprintln!("  metrics:  {} table(s)", metrics.len());
-    let critical = metrics.iter().filter(|m| m.risk_score >= 0.75).count();
-    let high = metrics.iter().filter(|m| m.risk_score >= 0.5 && m.risk_score < 0.75).count();
+    let risk_for = |m: &analysis::TableMetrics| m.effective_risk.unwrap_or(m.risk_score);
+    let critical = metrics.iter().filter(|m| risk_for(m) >= 0.75).count();
+    let high = metrics.iter().filter(|m| { let r = risk_for(m); r >= 0.5 && r < 0.75 }).count();
     if critical > 0 || high > 0 {
         eprintln!("  risk:     {} critical, {} high", critical, high);
     }

@@ -42,14 +42,14 @@ pub fn render<W: Write>(
     let overall_risk = if metrics.is_empty() {
         0.0
     } else {
-        metrics.iter().map(|m| m.risk_score).sum::<f64>() / metrics.len() as f64
+        metrics.iter().map(|m| m.display_risk()).sum::<f64>() / metrics.len() as f64
     };
-    let _critical = metrics.iter().filter(|m| TableRisk::from_score(m.risk_score) == TableRisk::Critical).count();
-    let _high = metrics.iter().filter(|m| TableRisk::from_score(m.risk_score) == TableRisk::High).count();
+    let _critical = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::Critical).count();
+    let _high = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::High).count();
     let orphans: Vec<_> = metrics.iter().filter(|m| m.is_orphan).collect();
     let in_cycle: Vec<_> = metrics.iter().filter(|m| m.in_cycle).collect();
     let mut sorted: Vec<&TableMetrics> = metrics.iter().collect();
-    sorted.sort_by(|a, b| b.risk_score.partial_cmp(&a.risk_score).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| b.display_risk().partial_cmp(&a.display_risk()).unwrap_or(std::cmp::Ordering::Equal));
     let queries_card = usage
         .map(|u| format!(r#"<div class="card"><strong>{}</strong> Queries analyzed</div>"#, u.total_queries_parsed))
         .unwrap_or_default();
@@ -144,7 +144,7 @@ pub fn render<W: Write>(
       <tbody>"#)?;
 
     for m in &sorted {
-        let risk = TableRisk::from_score(m.risk_score);
+        let risk = TableRisk::from_score(m.display_risk());
         let risk_class = match risk {
             TableRisk::Critical => "risk-critical",
             TableRisk::High => "risk-high",
@@ -272,6 +272,8 @@ mod tests {
             centrality_in: 0,
             risk_score: 0.0,
             risk_breakdown: None,
+            operational_weight: None,
+            effective_risk: None,
         }]
     }
 

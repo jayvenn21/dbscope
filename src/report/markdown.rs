@@ -22,10 +22,10 @@ pub fn render<W: Write>(
     writeln!(w, "")?;
 
     writeln!(w, "## Risk Summary\n")?;
-    let critical = metrics.iter().filter(|m| TableRisk::from_score(m.risk_score) == TableRisk::Critical).count();
-    let high = metrics.iter().filter(|m| TableRisk::from_score(m.risk_score) == TableRisk::High).count();
-    let medium = metrics.iter().filter(|m| TableRisk::from_score(m.risk_score) == TableRisk::Medium).count();
-    let low = metrics.iter().filter(|m| TableRisk::from_score(m.risk_score) == TableRisk::Low).count();
+    let critical = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::Critical).count();
+    let high = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::High).count();
+    let medium = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::Medium).count();
+    let low = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::Low).count();
     writeln!(w, "| Risk | Count |")?;
     writeln!(w, "|------|-------|")?;
     writeln!(w, "| Critical | {} |", critical)?;
@@ -38,9 +38,9 @@ pub fn render<W: Write>(
     writeln!(w, "| Table | Centrality (in/out) | FK Depth (out/in) | Orphan | In cycle | Risk |")?;
     writeln!(w, "|-------|---------------------|-------------------|--------|----------|------|")?;
     let mut sorted: Vec<&TableMetrics> = metrics.iter().collect();
-    sorted.sort_by(|a, b| b.risk_score.partial_cmp(&a.risk_score).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| b.display_risk().partial_cmp(&a.display_risk()).unwrap_or(std::cmp::Ordering::Equal));
     for m in sorted {
-        let risk = TableRisk::from_score(m.risk_score);
+        let risk = TableRisk::from_score(m.display_risk());
         writeln!(
             w,
             "| {} | {}/{} | {}/{} | {} | {} | {} |",
@@ -126,6 +126,8 @@ mod tests {
             centrality_in: 0,
             risk_score: 0.0,
             risk_breakdown: None,
+            operational_weight: None,
+            effective_risk: None,
         }]
     }
 

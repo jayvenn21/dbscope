@@ -47,6 +47,7 @@ pub async fn extract_schema(connection_uri: &str) -> Result<RawSchema, sqlx::Err
         indexes,
         constraints,
         foreign_keys,
+        table_stats: None,
         engine_metadata: None,
     })
 }

@@ -53,9 +53,41 @@ enum Command {
         #[arg(long)]
         migration: Option<PathBuf>,
 
-        /// Fail if any table risk score exceeds this (0–1). Default 0.5
+        /// Policy file (YAML: max_table_risk, no_cycles, no_orphans, max_blast_radius_percent). Overrides --threshold when set.
+        #[arg(long)]
+        policy: Option<PathBuf>,
+
+        /// Fail if any table risk score exceeds this (0–1). Default 0.5. Ignored if --policy is set.
         #[arg(long, default_value = "0.5")]
         threshold: f64,
+    },
+
+    /// Safe refactor plan: steps to drop a table (remove FKs first, then drop).
+    Plan {
+        /// Subcommand: drop
+        action: String,
+        /// Target table (e.g. users or public.users)
+        target: String,
+        #[arg(long, env = "DBSCOPE_SCHEMA_URI")]
+        schema: String,
+    },
+
+    /// Preview migration impact: structural delta, risk delta, blast radius, policy check.
+    Preview {
+        /// Migration file (DDL) to simulate
+        migration: PathBuf,
+
+        /// Postgres connection URI
+        #[arg(long, env = "DBSCOPE_SCHEMA_URI")]
+        schema: String,
+
+        /// Query log file to count broken queries
+        #[arg(long)]
+        query_log: Option<PathBuf>,
+
+        /// Policy file (YAML). If absent, only reports; with policy, exits 1 on violation.
+        #[arg(long)]
+        policy: Option<PathBuf>,
     },
 
     /// Summarize architecture: table count, risk overview, orphans, cycles, cold/hot (if query log).
@@ -96,8 +128,18 @@ async fn main() -> Result<(), anyhow::Error> {
         Command::Impact { target, schema, query_log } => {
             cli::run_impact(&target, &schema, query_log.as_deref()).await?;
         }
-        Command::Ci { schema, migration, threshold } => {
-            cli::run_ci(&schema, migration.as_deref(), threshold).await?;
+        Command::Ci { schema, migration, policy, threshold } => {
+            cli::run_ci(&schema, migration.as_deref(), policy.as_deref(), threshold).await?;
+        }
+        Command::Plan { action, target, schema } => {
+            if action.eq_ignore_ascii_case("drop") {
+                cli::run_plan_drop(&schema, &target).await?;
+            } else {
+                anyhow::bail!("Unknown plan action: {}. Use 'drop'.", action);
+            }
+        }
+        Command::Preview { migration, schema, query_log, policy } => {
+            cli::run_preview(&schema, &migration, query_log.as_deref(), policy.as_deref()).await?;
         }
         Command::Summarize { schema, query_log } => {
             cli::run_summarize(&schema, query_log.as_deref()).await?;

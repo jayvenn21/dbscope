@@ -53,6 +53,7 @@ fn fixture_raw_schema() -> core::RawSchema {
                 to_columns: vec!["id".into()],
             },
         ],
+        table_stats: None,
         engine_metadata: None,
     }
 }
@@ -135,6 +136,7 @@ fn large_realworld_fixture() -> core::RawSchema {
         indexes,
         constraints: vec![],
         foreign_keys,
+        table_stats: None,
         engine_metadata: None,
     }
 }

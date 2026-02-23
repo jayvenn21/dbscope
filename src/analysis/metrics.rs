@@ -5,7 +5,8 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::{EdgeRef, IntoNeighbors, Reversed};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::core::{DatabaseGraph, SchemaEdge, SchemaNode};
+use crate::core::{DatabaseGraph, RawSchema, SchemaEdge, SchemaNode};
+use super::usage::UsageReport;
 
 /// Explainable breakdown of table risk score. Industry-credible: weighted components.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -33,6 +34,17 @@ pub struct TableMetrics {
     pub risk_score: f64,
     /// How the risk score was computed (explainable scoring).
     pub risk_breakdown: Option<RiskScoreBreakdown>,
+    /// Operational weight (0.2–1.0) when table_stats or query usage available. effective_risk = risk_score * this.
+    pub operational_weight: Option<f64>,
+    /// risk_score * operational_weight when operational weighting applied; else None.
+    pub effective_risk: Option<f64>,
+}
+
+impl TableMetrics {
+    /// Risk to use for display and policy (operational-weighted when available).
+    pub fn display_risk(&self) -> f64 {
+        self.effective_risk.unwrap_or(self.risk_score)
+    }
 }
 
 /// Risk level for display.
@@ -206,8 +218,11 @@ fn risk_score_with_breakdown(
     (raw, Some(breakdown))
 }
 
-/// Compute metrics for every table in the graph.
-pub fn compute_all_metrics(graph: &DatabaseGraph) -> Vec<TableMetrics> {
+fn compute_all_metrics_inner(
+    graph: &DatabaseGraph,
+    raw: Option<&RawSchema>,
+    usage: Option<&UsageReport>,
+) -> Vec<TableMetrics> {
     let in_cycle_set = tables_in_cycles(graph);
     let mut results = Vec::with_capacity(graph.table_count());
     for &table_idx in &graph.table_node_list {
@@ -230,6 +245,12 @@ pub fn compute_all_metrics(graph: &DatabaseGraph) -> Vec<TableMetrics> {
             centrality_out,
             is_orphan,
         );
+        let (operational_weight, effective_risk) = compute_operational(
+            &qualified_name,
+            risk_score,
+            raw,
+            usage,
+        );
         results.push(TableMetrics {
             qualified_name,
             fk_depth_out,
@@ -240,9 +261,69 @@ pub fn compute_all_metrics(graph: &DatabaseGraph) -> Vec<TableMetrics> {
             centrality_in,
             risk_score,
             risk_breakdown,
+            operational_weight,
+            effective_risk,
         });
     }
     results
+}
+
+/// Operational weight from table_stats (row count, writes) and/or usage (query count). Returns (weight, effective_risk).
+fn compute_operational(
+    qualified_name: &str,
+    structural_risk: f64,
+    raw: Option<&RawSchema>,
+    usage: Option<&UsageReport>,
+) -> (Option<f64>, Option<f64>) {
+    let stats = raw.and_then(|r| r.table_stats.as_ref());
+    let row_estimate = stats.and_then(|s| {
+        s.iter()
+            .find(|t| format!("{}.{}", t.schema_name, t.table_name) == qualified_name)
+    });
+    let query_count = usage.and_then(|u| {
+        u.hot_tables
+            .iter()
+            .find(|h| h.qualified_name == qualified_name)
+            .map(|h| h.query_count)
+    }).unwrap_or(0);
+
+    let has_any = row_estimate.is_some() || usage.is_some();
+    if !has_any {
+        return (None, None);
+    }
+
+    let row_factor = row_estimate
+        .map(|r| (r.row_estimate as f64 / 1_000_000.0).min(1.0))
+        .unwrap_or(0.0);
+    let write_factor = row_estimate
+        .map(|r| {
+            let w = r.n_tup_ins + r.n_tup_upd + r.n_tup_del;
+            (w as f64 / 1_000_000.0).min(1.0)
+        })
+        .unwrap_or(0.0);
+    let max_q = usage
+        .map(|u| u.hot_tables.iter().map(|h| h.query_count).max().unwrap_or(1).max(1))
+        .unwrap_or(1);
+    let query_factor = (query_count as f64 / max_q as f64).min(1.0);
+
+    let combined = (0.4 * row_factor + 0.3 * write_factor + 0.3 * query_factor).min(1.0);
+    let weight = 0.2 + 0.8 * combined;
+    let effective = (structural_risk * weight).min(1.0);
+    (Some(weight), Some(effective))
+}
+
+/// Compute metrics for every table, with optional operational weighting (raw stats + query usage).
+pub fn compute_all_metrics_with_operational(
+    graph: &DatabaseGraph,
+    raw: Option<&RawSchema>,
+    usage: Option<&UsageReport>,
+) -> Vec<TableMetrics> {
+    compute_all_metrics_inner(graph, raw, usage)
+}
+
+/// Compute metrics (structural only). For operational weighting use compute_all_metrics_with_operational.
+pub fn compute_all_metrics(graph: &DatabaseGraph) -> Vec<TableMetrics> {
+    compute_all_metrics_inner(graph, None, None)
 }
 
 #[cfg(test)]
@@ -283,6 +364,7 @@ mod tests {
                     to_columns: vec!["id".into()],
                 },
             ],
+            table_stats: None,
             engine_metadata: None,
         }
     }
@@ -364,6 +446,7 @@ mod tests {
                     to_columns: vec!["id".into()],
                 },
             ],
+            table_stats: None,
             engine_metadata: None,
         };
         let graph = DatabaseGraph::from_raw_schema(raw);
