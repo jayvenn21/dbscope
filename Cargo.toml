@@ -4,6 +4,22 @@ version = "0.1.0"
 edition = "2021"
 description = "Universal relational schema intelligence for SQL databases (Postgres, MySQL, SQLite, ClickHouse). Understand your database before you touch it."
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/jayvenn21/dbscope"
+homepage = "https://github.com/jayvenn21/dbscope"
+readme = "README.md"
+keywords = ["database", "schema", "postgres", "risk", "migration"]
+categories = ["command-line-utilities", "database"]
+exclude = [
+    "dbscope-report.*",
+    "dbscope-graph.dot",
+    "demo/",
+    "demo-reports/",
+    "dummy-data/",
+    "reports/",
+    "scripts/",
+    "*.gif",
+    "*.png",
+]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
