@@ -1,0 +1,15 @@
+target/
+.git/
+.github/
+demo/
+demo-reports/
+dummy-data/
+reports/
+scripts/
+docs/
+*.gif
+*.png
+*.md
+!README.md
+dbscope-report.*
+dbscope-graph.dot
