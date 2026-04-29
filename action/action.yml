@@ -1,0 +1,150 @@
+name: "DBScope Schema Check"
+description: "Run dbscope schema analysis and CI checks in your GitHub Actions workflow."
+branding:
+  icon: "database"
+  color: "blue"
+
+inputs:
+  schema:
+    description: "Database connection URI (e.g. postgres://user:pass@host:5432/dbname)"
+    required: true
+  command:
+    description: "Command to run: ci, analyze, lint, summarize, diff, impact, deps, preview, snapshot"
+    required: false
+    default: "ci"
+  policy:
+    description: "Path to dbscope.policy.yaml file"
+    required: false
+  migration:
+    description: "Path to migration SQL file (for ci/preview commands)"
+    required: false
+  threshold:
+    description: "Risk threshold (0-1) for ci command"
+    required: false
+    default: "0.5"
+  version:
+    description: "DBScope version to install (default: latest)"
+    required: false
+    default: "latest"
+  query-log:
+    description: "Path to query log file for usage analysis"
+    required: false
+  target:
+    description: "Target table or column for impact/deps commands (e.g. public.users)"
+    required: false
+  snapshot-output:
+    description: "Output path for snapshot command (default: dbscope-snapshot.json)"
+    required: false
+    default: "dbscope-snapshot.json"
+  before:
+    description: "Path to 'before' snapshot for diff command"
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install dbscope
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          cargo install dbscope || {
+            echo "::warning::cargo install failed, building from source..."
+            cargo install --git https://github.com/jayvenn21/dbscope.git
+          }
+        else
+          cargo install dbscope --version "${{ inputs.version }}" || {
+            echo "::warning::cargo install failed for version ${{ inputs.version }}"
+            exit 1
+          }
+        fi
+
+    - name: Run dbscope
+      shell: bash
+      env:
+        DBSCOPE_SCHEMA_URI: ${{ inputs.schema }}
+      run: |
+        ARGS=""
+
+        case "${{ inputs.command }}" in
+          ci)
+            ARGS="ci --schema ${{ inputs.schema }}"
+            if [ -n "${{ inputs.migration }}" ]; then
+              ARGS="$ARGS --migration ${{ inputs.migration }}"
+            fi
+            if [ -n "${{ inputs.policy }}" ]; then
+              ARGS="$ARGS --policy ${{ inputs.policy }}"
+            else
+              ARGS="$ARGS --threshold ${{ inputs.threshold }}"
+            fi
+            ;;
+          lint)
+            ARGS="lint --schema ${{ inputs.schema }}"
+            ;;
+          analyze)
+            ARGS="analyze --schema ${{ inputs.schema }} -o dbscope-reports"
+            if [ -n "${{ inputs.query-log }}" ]; then
+              ARGS="$ARGS --query-log ${{ inputs.query-log }}"
+            fi
+            ;;
+          summarize)
+            ARGS="summarize --schema ${{ inputs.schema }} --json"
+            if [ -n "${{ inputs.query-log }}" ]; then
+              ARGS="$ARGS --query-log ${{ inputs.query-log }}"
+            fi
+            ;;
+          impact)
+            if [ -z "${{ inputs.target }}" ]; then
+              echo "::error::impact command requires 'target' input"
+              exit 1
+            fi
+            ARGS="impact ${{ inputs.target }} --schema ${{ inputs.schema }} --json"
+            if [ -n "${{ inputs.query-log }}" ]; then
+              ARGS="$ARGS --query-log ${{ inputs.query-log }}"
+            fi
+            ;;
+          deps)
+            if [ -z "${{ inputs.target }}" ]; then
+              echo "::error::deps command requires 'target' input"
+              exit 1
+            fi
+            ARGS="deps ${{ inputs.target }} --schema ${{ inputs.schema }} --json"
+            ;;
+          preview)
+            if [ -z "${{ inputs.migration }}" ]; then
+              echo "::error::preview command requires 'migration' input"
+              exit 1
+            fi
+            ARGS="preview ${{ inputs.migration }} --schema ${{ inputs.schema }}"
+            if [ -n "${{ inputs.query-log }}" ]; then
+              ARGS="$ARGS --query-log ${{ inputs.query-log }}"
+            fi
+            if [ -n "${{ inputs.policy }}" ]; then
+              ARGS="$ARGS --policy ${{ inputs.policy }}"
+            fi
+            ;;
+          snapshot)
+            ARGS="snapshot --schema ${{ inputs.schema }} -o ${{ inputs.snapshot-output }}"
+            ;;
+          diff)
+            if [ -z "${{ inputs.before }}" ]; then
+              echo "::error::diff command requires 'before' input (path to snapshot file)"
+              exit 1
+            fi
+            ARGS="diff ${{ inputs.before }} ${{ inputs.schema }} --json"
+            ;;
+          *)
+            echo "::error::Unknown command: ${{ inputs.command }}. Valid: ci, analyze, lint, summarize, impact, deps, preview, snapshot, diff"
+            exit 1
+            ;;
+        esac
+
+        echo "Running: dbscope $ARGS"
+        dbscope $ARGS
+
+    - name: Upload reports (if analyze)
+      if: inputs.command == 'analyze' && always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: dbscope-reports
+        path: dbscope-reports/
+        if-no-files-found: ignore

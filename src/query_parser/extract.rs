@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use sqlparser::ast::{Expr, Ident, ObjectName, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins};
+use sqlparser::ast::{
+    Expr, Ident, ObjectName, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
+};
 
 /// Qualified table: schema.table or table (schema default "public" when missing).
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -38,16 +40,24 @@ pub struct ParsedQuery {
     /// Alias (e.g. "p") -> actual table (e.g. public.posts). Used to resolve column refs in WHERE.
     pub alias_to_table: HashMap<String, QualifiedTable>,
     pub columns: Vec<QualifiedColumn>,
-    /// Columns that appear in WHERE (and HAVING) — used for index suggestions.
+    /// Columns that appear in WHERE (and HAVING). Used for index suggestions.
     pub columns_in_where: Vec<QualifiedColumn>,
     /// Pairs of table qualified names that are joined (for join hotspots).
     pub join_pairs: Vec<(String, String)>,
 }
 
 /// Parse a single SQL string into ParsedQuery. Returns None if unparseable.
+/// Uses GenericDialect which handles Postgres, MySQL, and ClickHouse syntax.
 pub fn parse_sql(sql: &str) -> Option<ParsedQuery> {
-    let dialect = sqlparser::dialect::PostgreSqlDialect {};
-    let stmts = sqlparser::parser::Parser::parse_sql(&dialect, sql).ok()?;
+    parse_sql_with_dialect(sql, &sqlparser::dialect::GenericDialect {})
+}
+
+/// Parse SQL with a specific dialect (useful when the database engine is known).
+pub fn parse_sql_with_dialect(
+    sql: &str,
+    dialect: &dyn sqlparser::dialect::Dialect,
+) -> Option<ParsedQuery> {
+    let stmts = sqlparser::parser::Parser::parse_sql(dialect, sql).ok()?;
     let stmt = stmts.first()?;
     extract_from_statement(stmt)
 }
@@ -86,7 +96,7 @@ fn idents_to_qualified_column(
             column: parts[2].clone(),
         })
     } else if parts.len() == 2 {
-        // table.column — resolve alias to actual table so index suggestions use canonical names
+        // table.column: resolve alias to actual table so index suggestions use canonical names
         let (schema, table) = alias_to_table
             .get(&parts[0])
             .map(|qt| (qt.schema.clone(), qt.table.clone()))
@@ -113,7 +123,12 @@ fn extract_from_statement(stmt: &Statement) -> Option<ParsedQuery> {
         Statement::Query(q) => {
             extract_from_query(q.as_ref(), &mut out);
         }
-        Statement::Insert { table_name, columns, source, .. } => {
+        Statement::Insert {
+            table_name,
+            columns,
+            source,
+            ..
+        } => {
             let qt = object_name_to_qualified(table_name);
             out.tables.push(qt.clone());
             if let Some(sub) = source.as_ref() {
@@ -127,25 +142,42 @@ fn extract_from_statement(stmt: &Statement) -> Option<ParsedQuery> {
                 });
             }
         }
-        Statement::Update { table, selection, .. } => {
+        Statement::Update {
+            table, selection, ..
+        } => {
             tables_from_table_with_joins(table, &mut out);
             if let Some(expr) = selection {
-                columns_from_expr(expr, &out.tables, &out.alias_to_table, true, &mut out.columns_in_where);
+                columns_from_expr(
+                    expr,
+                    &out.tables,
+                    &out.alias_to_table,
+                    true,
+                    &mut out.columns_in_where,
+                );
             }
         }
-        Statement::Delete { tables: delete_tables, selection, .. } => {
+        Statement::Delete {
+            tables: delete_tables,
+            selection,
+            ..
+        } => {
             for name in delete_tables {
                 out.tables.push(object_name_to_qualified(name));
             }
             if let Some(expr) = selection {
-                columns_from_expr(expr, &out.tables, &out.alias_to_table, true, &mut out.columns_in_where);
+                columns_from_expr(
+                    expr,
+                    &out.tables,
+                    &out.alias_to_table,
+                    true,
+                    &mut out.columns_in_where,
+                );
             }
         }
         _ => return None,
     }
     Some(out)
 }
-
 
 fn tables_from_table_with_joins(twj: &TableWithJoins, out: &mut ParsedQuery) {
     table_factor_to_qualified(&twj.relation, out);
@@ -167,7 +199,9 @@ fn table_factor_to_qualified(tf: &TableFactor, out: &mut ParsedQuery) {
             extract_from_query(subquery.as_ref(), &mut ParsedQuery::default());
             // We don't add subquery tables to top-level tables for simplicity
         }
-        TableFactor::NestedJoin { table_with_joins, .. } => {
+        TableFactor::NestedJoin {
+            table_with_joins, ..
+        } => {
             tables_from_table_with_joins(table_with_joins, out);
         }
         _ => {}
@@ -197,8 +231,16 @@ fn extract_from_set_expr(expr: &SetExpr, out: &mut ParsedQuery) {
             let alias_to_table = &out.alias_to_table;
             for item in &select.projection {
                 match item {
-                    SelectItem::UnnamedExpr(e) => columns_from_expr(e, &out.tables, alias_to_table, false, &mut out.columns),
-                    SelectItem::ExprWithAlias { expr, .. } => columns_from_expr(expr, &out.tables, alias_to_table, false, &mut out.columns),
+                    SelectItem::UnnamedExpr(e) => {
+                        columns_from_expr(e, &out.tables, alias_to_table, false, &mut out.columns)
+                    }
+                    SelectItem::ExprWithAlias { expr, .. } => columns_from_expr(
+                        expr,
+                        &out.tables,
+                        alias_to_table,
+                        false,
+                        &mut out.columns,
+                    ),
                     SelectItem::QualifiedWildcard(name, _) => {
                         let qt = object_name_to_qualified(name);
                         out.columns.push(QualifiedColumn {
@@ -211,10 +253,22 @@ fn extract_from_set_expr(expr: &SetExpr, out: &mut ParsedQuery) {
                 }
             }
             if let Some(sel) = &select.selection {
-                columns_from_expr(sel, &out.tables, alias_to_table, true, &mut out.columns_in_where);
+                columns_from_expr(
+                    sel,
+                    &out.tables,
+                    alias_to_table,
+                    true,
+                    &mut out.columns_in_where,
+                );
             }
             if let Some(having) = &select.having {
-                columns_from_expr(having, &out.tables, alias_to_table, true, &mut out.columns_in_where);
+                columns_from_expr(
+                    having,
+                    &out.tables,
+                    alias_to_table,
+                    true,
+                    &mut out.columns_in_where,
+                );
             }
         }
         SetExpr::Query(q) => extract_from_query(q, out),
@@ -226,6 +280,7 @@ fn extract_from_set_expr(expr: &SetExpr, out: &mut ParsedQuery) {
     }
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn columns_from_expr(
     expr: &Expr,
     tables: &[QualifiedTable],
@@ -233,26 +288,23 @@ fn columns_from_expr(
     in_where: bool,
     out: &mut Vec<QualifiedColumn>,
 ) {
-    let default_schema = tables.first().map(|t| t.schema.as_str()).unwrap_or("public");
+    let default_schema = tables
+        .first()
+        .map(|t| t.schema.as_str())
+        .unwrap_or("public");
     let default_table = tables.first().map(|t| t.table.as_str()).unwrap_or("");
     match expr {
         Expr::Identifier(ident) => {
-            if in_where {
-                out.push(QualifiedColumn {
-                    schema: default_schema.to_string(),
-                    table: default_table.to_string(),
-                    column: ident.value.clone(),
-                });
-            } else {
-                out.push(QualifiedColumn {
-                    schema: default_schema.to_string(),
-                    table: default_table.to_string(),
-                    column: ident.value.clone(),
-                });
-            }
+            out.push(QualifiedColumn {
+                schema: default_schema.to_string(),
+                table: default_table.to_string(),
+                column: ident.value.clone(),
+            });
         }
         Expr::CompoundIdentifier(idents) => {
-            if let Some(qc) = idents_to_qualified_column(idents, default_schema, default_table, alias_to_table) {
+            if let Some(qc) =
+                idents_to_qualified_column(idents, default_schema, default_table, alias_to_table)
+            {
                 out.push(qc);
             }
         }
@@ -260,15 +312,21 @@ fn columns_from_expr(
             columns_from_expr(left, tables, alias_to_table, in_where, out);
             columns_from_expr(right, tables, alias_to_table, in_where, out);
         }
-        Expr::UnaryOp { expr, .. } => columns_from_expr(expr, tables, alias_to_table, in_where, out),
-        Expr::IsNull(expr) | Expr::IsNotNull(expr) => columns_from_expr(expr, tables, alias_to_table, in_where, out),
+        Expr::UnaryOp { expr, .. } => {
+            columns_from_expr(expr, tables, alias_to_table, in_where, out)
+        }
+        Expr::IsNull(expr) | Expr::IsNotNull(expr) => {
+            columns_from_expr(expr, tables, alias_to_table, in_where, out)
+        }
         Expr::InList { expr, list, .. } => {
             columns_from_expr(expr, tables, alias_to_table, in_where, out);
             for e in list {
                 columns_from_expr(e, tables, alias_to_table, in_where, out);
             }
         }
-        Expr::Between { expr, low, high, .. } => {
+        Expr::Between {
+            expr, low, high, ..
+        } => {
             columns_from_expr(expr, tables, alias_to_table, in_where, out);
             columns_from_expr(low, tables, alias_to_table, in_where, out);
             columns_from_expr(high, tables, alias_to_table, in_where, out);
@@ -278,7 +336,12 @@ fn columns_from_expr(
             columns_from_expr(pattern, tables, alias_to_table, in_where, out);
         }
         Expr::Nested(e) => columns_from_expr(e, tables, alias_to_table, in_where, out),
-        Expr::Case { conditions, results, else_result, .. } => {
+        Expr::Case {
+            conditions,
+            results,
+            else_result,
+            ..
+        } => {
             for c in conditions {
                 columns_from_expr(c, tables, alias_to_table, in_where, out);
             }
@@ -348,7 +411,8 @@ mod tests {
 
     #[test]
     fn parse_select_join_extracts_join_pairs() {
-        let q = parse_sql("SELECT * FROM public.users u JOIN public.posts p ON u.id = p.user_id").unwrap();
+        let q = parse_sql("SELECT * FROM public.users u JOIN public.posts p ON u.id = p.user_id")
+            .unwrap();
         assert!(q.tables.len() >= 2);
         assert!(!q.join_pairs.is_empty());
     }

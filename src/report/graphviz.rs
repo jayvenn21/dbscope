@@ -1,4 +1,4 @@
-//! Graphviz .dot export of FK dependency graph (Phase 1 output).
+//! Graphviz .dot export of FK dependency graph.
 //! Use: dot -Tsvg dbscope-graph.dot -o dbscope-graph.svg
 
 use std::io::Write;
@@ -31,7 +31,12 @@ pub fn render<W: Write>(
     let risk_by_table: std::collections::HashMap<String, TableRisk> = metrics
         .map(|m| {
             m.iter()
-                .map(|t| (t.qualified_name.clone(), TableRisk::from_score(t.display_risk())))
+                .map(|t| {
+                    (
+                        t.qualified_name.clone(),
+                        TableRisk::from_score(t.display_risk()),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();

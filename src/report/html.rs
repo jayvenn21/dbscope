@@ -44,69 +44,194 @@ pub fn render<W: Write>(
     } else {
         metrics.iter().map(|m| m.display_risk()).sum::<f64>() / metrics.len() as f64
     };
-    let _critical = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::Critical).count();
-    let _high = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::High).count();
+    let _critical = metrics
+        .iter()
+        .filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::Critical)
+        .count();
+    let _high = metrics
+        .iter()
+        .filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::High)
+        .count();
     let orphans: Vec<_> = metrics.iter().filter(|m| m.is_orphan).collect();
     let in_cycle: Vec<_> = metrics.iter().filter(|m| m.in_cycle).collect();
     let mut sorted: Vec<&TableMetrics> = metrics.iter().collect();
-    sorted.sort_by(|a, b| b.display_risk().partial_cmp(&a.display_risk()).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        b.display_risk()
+            .partial_cmp(&a.display_risk())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let queries_card = usage
-        .map(|u| format!(r#"<div class="card"><strong>{}</strong> Queries analyzed</div>"#, u.total_queries_parsed))
+        .map(|u| {
+            format!(
+                r#"<div class="stat"><span class="stat-val">{}</span> <span class="stat-label">queries</span></div>"#,
+                u.total_queries_parsed
+            )
+        })
         .unwrap_or_default();
     let complexity = schema_complexity(total_tables, total_fks);
     let hotness_map: HashMap<String, u64> = usage
-        .map(|u| u.hot_tables.iter().map(|h| (h.qualified_name.clone(), h.query_count)).collect())
+        .map(|u| {
+            u.hot_tables
+                .iter()
+                .map(|h| (h.qualified_name.clone(), h.query_count))
+                .collect()
+        })
         .unwrap_or_default();
 
-    writeln!(w, r#"<!DOCTYPE html>
+    writeln!(
+        w,
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DBScope Schema Report</title>
+  <title>dbscope</title>
   <style>
-    :root {{ font-family: system-ui, -apple-system, sans-serif; background: #0d1117; color: #e6edf3; }}
-    body {{ max-width: 1200px; margin: 0 auto; padding: 2rem; }}
-    h1 {{ font-size: 1.75rem; margin-bottom: 0.5rem; }}
-    .overview {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 1rem; margin: 1.5rem 0; }}
-    .card {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; }}
-    .card strong {{ display: block; font-size: 1.5rem; color: #58a6ff; }}
-    .risk-critical {{ color: #f85149; }}
-    .risk-high {{ color: #db6d28; }}
-    .risk-medium {{ color: #d29922; }}
-    .risk-low {{ color: #3fb950; }}
-    table {{ width: 100%; border-collapse: collapse; margin: 1rem 0; }}
-    th, td {{ text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #30363d; }}
-    th {{ background: #161b22; color: #8b949e; font-weight: 600; cursor: pointer; user-select: none; }}
-    th:hover {{ background: #21262d; }}
-    tr:hover {{ background: #161b22; }}
-    section {{ margin: 2rem 0; }}
-    section h2 {{ font-size: 1.25rem; margin-bottom: 0.75rem; color: #8b949e; }}
-    ul {{ margin: 0; padding-left: 1.5rem; }}
-    .meta {{ color: #8b949e; font-size: 0.875rem; margin-top: 2rem; }}
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{
+      font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      color: #1a1a2e;
+      background: #fff;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }}
+    .wrap {{
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 48px 32px;
+    }}
+    .mark {{
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: #4F46E5;
+      margin-bottom: 4px;
+    }}
+    h1 {{
+      font-size: 20px;
+      font-weight: 500;
+      color: #1a1a2e;
+      margin-bottom: 32px;
+    }}
+    .stats {{
+      display: flex;
+      gap: 32px;
+      flex-wrap: wrap;
+      margin-bottom: 40px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid #eaeaea;
+    }}
+    .stat {{
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }}
+    .stat-val {{
+      font-size: 22px;
+      font-weight: 600;
+      color: #1a1a2e;
+      font-variant-numeric: tabular-nums;
+    }}
+    .stat-label {{
+      font-size: 12px;
+      color: #6b7280;
+    }}
+    h2 {{
+      font-size: 13px;
+      font-weight: 600;
+      color: #6b7280;
+      margin-bottom: 12px;
+      margin-top: 32px;
+    }}
+    .note {{
+      font-size: 12px;
+      color: #9ca3af;
+      margin-bottom: 12px;
+    }}
+    .risk-critical {{ color: #dc2626; font-weight: 600; }}
+    .risk-high {{ color: #ea580c; font-weight: 600; }}
+    .risk-medium {{ color: #d97706; font-weight: 600; }}
+    .risk-low {{ color: #16a34a; font-weight: 600; }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-bottom: 32px;
+    }}
+    th {{
+      text-align: left;
+      padding: 8px 12px;
+      font-weight: 500;
+      font-size: 11px;
+      color: #9ca3af;
+      border-bottom: 1px solid #eaeaea;
+      cursor: pointer;
+      user-select: none;
+    }}
+    th:hover {{ color: #4F46E5; }}
+    td {{
+      padding: 7px 12px;
+      border-bottom: 1px solid #f5f5f5;
+      color: #374151;
+    }}
+    tr:hover td {{ background: #fafafa; }}
+    td:first-child {{
+      font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+      font-size: 12px;
+      color: #1a1a2e;
+    }}
+    .sort-asc::after {{ content: " \u2191"; color: #4F46E5; }}
+    .sort-desc::after {{ content: " \u2193"; color: #4F46E5; }}
+    input[type="search"] {{
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 13px;
+      color: #374151;
+      width: 240px;
+      margin-bottom: 12px;
+      font-family: inherit;
+    }}
+    input[type="search"]::placeholder {{ color: #9ca3af; }}
+    input[type="search"]:focus {{
+      outline: none;
+      border-color: #4F46E5;
+    }}
+    ul {{ list-style: none; }}
+    ul li {{
+      font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+      font-size: 12px;
+      color: #6b7280;
+      padding: 3px 0;
+    }}
+    code {{
+      font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+      font-size: 12px;
+      background: #f3f4f6;
+      padding: 2px 5px;
+      border-radius: 3px;
+    }}
+    .hidden {{ display: none; }}
   </style>
 </head>
 <body>
-  <h1>DBScope Schema Report</h1>
-  <p class="meta">Static report — no server, no telemetry. Generated by dbscope.</p>
+<div class="wrap">
+  <div class="mark">dbscope</div>
+  <h1>Schema Report</h1>
 
-  <section>
-    <h2>Overview</h2>
-    <div class="overview">
-      <div class="card"><strong>{}</strong> Tables</div>
-      <div class="card"><strong>{}</strong> Columns</div>
-      <div class="card"><strong>{}</strong> Indexes</div>
-      <div class="card"><strong>{}</strong> Foreign keys</div>
-      <div class="card"><strong>{:.2}</strong> Overall risk score</div>
-      <div class="card"><strong>{:.2}</strong> Schema complexity</div>
-      {}
-    </div>
-  </section>
+  <div class="stats">
+    <div class="stat"><span class="stat-val">{}</span> <span class="stat-label">tables</span></div>
+    <div class="stat"><span class="stat-val">{}</span> <span class="stat-label">columns</span></div>
+    <div class="stat"><span class="stat-val">{}</span> <span class="stat-label">indexes</span></div>
+    <div class="stat"><span class="stat-val">{}</span> <span class="stat-label">foreign keys</span></div>
+    <div class="stat"><span class="stat-val">{:.2}</span> <span class="stat-label">risk</span></div>
+    <div class="stat"><span class="stat-val">{:.2}</span> <span class="stat-label">complexity</span></div>
+    {}
+  </div>
 
-  <section>
-    <h2>Dependency graph</h2>
-    <p class="meta">FK graph: <code>dbscope-graph.dot</code> — run <code>dot -Tsvg dbscope-graph.dot -o dbscope-graph.svg</code> to view.</p>
-  </section>
+  <h2>Dependency graph</h2>
+  <p class="note">FK graph: <code>dbscope-graph.dot</code> &mdash; render with <code>dot -Tsvg dbscope-graph.dot -o graph.svg</code></p>
 "#,
         total_tables,
         total_columns,
@@ -116,32 +241,34 @@ pub fn render<W: Write>(
         complexity,
         queries_card,
     )?;
-    writeln!(w, r#"
-  <section>
-    <h2>Risk scoring (explainable)</h2>
-    <p class="meta">Table risk = depth (max 0.4) + cycle (0.3 if in cycle) + centrality (max 0.3). Orphans = 0. Impact risk = 0.4×FK_downstream + 0.3×index_deps + 0.3×queries_affected.</p>
-  </section>
+    writeln!(
+        w,
+        r#"
+  <h2>Risk scoring</h2>
+  <p class="note">risk = depth (max 0.4) + cycle (0.3) + centrality (max 0.3). Orphans = 0.</p>
 
-  <section>
-    <h2>Risk table</h2>
-    <p>Tables sorted by risk (highest first). Centrality = in/out FK count. FK depth = max path length.</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Table</th>
-          <th>Centrality (in / out)</th>
-          <th>FK depth (out / in)</th>
-          <th>Orphan</th>
-          <th>In cycle</th>
-          <th>Risk</th>"#)?;
+  <h2>Risk table</h2>
+  <input type="search" id="table-search" placeholder="Filter..." aria-label="Filter tables">
+  <table id="risk-table">
+    <thead>
+      <tr>
+        <th>Table</th>
+        <th>Centrality (in/out)</th>
+        <th>FK depth (out/in)</th>
+        <th>Orphan</th>
+        <th>Cycle</th>
+        <th>Risk</th>"#
+    )?;
     if usage.is_some() {
-        writeln!(w, r#"
-          <th>Hotness</th>"#)?;
+        writeln!(w, r#"        <th>Hotness</th>"#)?;
     }
-    writeln!(w, r#"
-        </tr>
-      </thead>
-      <tbody>"#)?;
+    writeln!(
+        w,
+        r#"
+      </tr>
+    </thead>
+    <tbody>"#
+    )?;
 
     for m in &sorted {
         let risk = TableRisk::from_score(m.display_risk());
@@ -155,104 +282,162 @@ pub fn render<W: Write>(
             hotness_map
                 .get(&m.qualified_name)
                 .map(|c| format!("{}", c))
-                .unwrap_or_else(|| "—".to_string())
+                .unwrap_or_else(|| "-".to_string())
         } else {
             String::new()
         };
-        writeln!(
+        write!(
             w,
-            r#"        <tr>
-          <td>{}</td>
-          <td>{} / {}</td>
-          <td>{} / {}</td>
-          <td>{}</td>
-          <td>{}</td>
-          <td class="{}">{}</td>"#,
+            r#"      <tr><td>{}</td><td>{} / {}</td><td>{} / {}</td><td>{}</td><td>{}</td><td class="{}">{}</td>"#,
             escape(&m.qualified_name),
             m.centrality_in,
             m.centrality_out,
             m.fk_depth_out,
             m.fk_depth_in,
-            if m.is_orphan { "yes" } else { "no" },
-            if m.in_cycle { "yes" } else { "no" },
+            if m.is_orphan { "yes" } else { "-" },
+            if m.in_cycle { "yes" } else { "-" },
             risk_class,
             risk.label(),
         )?;
         if usage.is_some() {
-            writeln!(w, r#"
-          <td>{}</td>"#, escape(&hotness_cell))?;
+            write!(w, "<td>{}</td>", escape(&hotness_cell))?;
         }
-        writeln!(w, r#"
-        </tr>"#)?;
+        writeln!(w, "</tr>")?;
     }
 
-    writeln!(w, r#"      </tbody>
-    </table>
-  </section>"#)?;
+    writeln!(
+        w,
+        r#"    </tbody>
+  </table>"#
+    )?;
 
     if !orphans.is_empty() {
-        writeln!(w, r#"
-  <section>
-    <h2>Orphan tables</h2>
-    <p>Tables with no foreign key references in or out.</p>
-    <ul>"#)?;
+        writeln!(
+            w,
+            r#"
+  <h2>Orphan tables</h2>
+  <p class="note">No FK references in or out.</p>
+  <ul>"#
+        )?;
         for m in orphans {
-            writeln!(w, "      <li>{}</li>", escape(&m.qualified_name))?;
+            writeln!(w, "    <li>{}</li>", escape(&m.qualified_name))?;
         }
-        writeln!(w, "    </ul>\n  </section>")?;
+        writeln!(w, "  </ul>")?;
     }
 
     if !in_cycle.is_empty() {
-        writeln!(w, r#"
-  <section>
-    <h2>Tables in circular dependencies</h2>
-    <ul>"#)?;
+        writeln!(
+            w,
+            r#"
+  <h2>Circular dependencies</h2>
+  <ul>"#
+        )?;
         for m in in_cycle {
-            writeln!(w, "      <li>{}</li>", escape(&m.qualified_name))?;
+            writeln!(w, "    <li>{}</li>", escape(&m.qualified_name))?;
         }
-        writeln!(w, "    </ul>\n  </section>")?;
+        writeln!(w, "  </ul>")?;
     }
 
     if let Some(u) = usage {
         if !u.cold_tables.is_empty() {
-            writeln!(w, r#"
-  <section>
-    <h2>Cold tables (never queried)</h2>
-    <ul>"#)?;
-            for t in &u.cold_tables {
-                writeln!(w, "      <li>{}</li>", escape(&t.0))?;
+            writeln!(
+                w,
+                r#"
+  <h2>Cold tables</h2>
+  <p class="note">Never queried.</p>
+  <ul>"#
+            )?;
+            for ct in &u.cold_tables {
+                writeln!(w, "    <li>{}</li>", escape(&ct.0))?;
             }
-            writeln!(w, "    </ul>\n  </section>")?;
+            writeln!(w, "  </ul>")?;
         }
         if !u.cold_columns.is_empty() {
-            writeln!(w, r#"
-  <section>
-    <h2>Cold columns (never referenced)</h2>
-    <ul>"#)?;
+            writeln!(
+                w,
+                r#"
+  <h2>Cold columns</h2>
+  <p class="note">Never referenced.</p>
+  <ul>"#
+            )?;
             for c in u.cold_columns.iter().take(100) {
-                writeln!(w, "      <li>{}.{}</li>", escape(&c.qualified_table), escape(&c.column_name))?;
+                writeln!(
+                    w,
+                    "    <li>{}.{}</li>",
+                    escape(&c.qualified_table),
+                    escape(&c.column_name)
+                )?;
             }
-            writeln!(w, "    </ul>\n  </section>")?;
+            writeln!(w, "  </ul>")?;
         }
         if !u.index_suggestions.is_empty() {
-            writeln!(w, r#"
-  <section>
-    <h2>Index suggestions (column in WHERE, no index)</h2>
-    <table>
-      <thead><tr><th>Table</th><th>Column</th><th>WHERE count</th></tr></thead>
-      <tbody>"#)?;
+            writeln!(
+                w,
+                r#"
+  <h2>Index suggestions</h2>
+  <p class="note">Columns in WHERE without a covering index.</p>
+  <table>
+    <thead><tr><th>Table</th><th>Column</th><th>WHERE count</th></tr></thead>
+    <tbody>"#
+            )?;
             for s in u.index_suggestions.iter().take(30) {
-                writeln!(w, "        <tr><td>{}</td><td>{}</td><td>{}</td></tr>",
-                    escape(&s.qualified_table), escape(&s.column_name), s.in_where_count)?;
+                writeln!(
+                    w,
+                    "      <tr><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    escape(&s.qualified_table),
+                    escape(&s.column_name),
+                    s.in_where_count
+                )?;
             }
-            writeln!(w, "      </tbody>\n    </table>\n  </section>")?;
+            writeln!(w, "    </tbody>\n  </table>")?;
         }
     }
 
-    writeln!(w, r#"
-  <p class="meta">DBScope — understand your database before you touch it.</p>
+    writeln!(
+        w,
+        r#"
+</div>
+<script>
+  (function(){{
+    var table=document.getElementById("risk-table");
+    if(!table)return;
+    var thead=table.querySelector("thead");
+    var tbody=table.querySelector("tbody");
+    var headers=thead.querySelectorAll("th");
+    var rows=Array.from(tbody.querySelectorAll("tr"));
+    var sortCol=-1,sortAsc=true;
+    function parseVal(td,i){{
+      var t=td.textContent.trim();
+      if(i===0)return t.toLowerCase();
+      var n=parseFloat(t.replace(/[^0-9.\-]/g,""));
+      return isNaN(n)?t.toLowerCase():n;
+    }}
+    headers.forEach(function(h,i){{
+      h.addEventListener("click",function(){{
+        if(sortCol===i)sortAsc=!sortAsc;else{{sortCol=i;sortAsc=true;}}
+        headers.forEach(function(x){{x.classList.remove("sort-asc","sort-desc");}});
+        h.classList.add(sortAsc?"sort-asc":"sort-desc");
+        rows.sort(function(a,b){{
+          var va=parseVal(a.cells[i],i),vb=parseVal(b.cells[i],i);
+          if(va<vb)return sortAsc?-1:1;
+          if(va>vb)return sortAsc?1:-1;
+          return 0;
+        }});
+        rows.forEach(function(r){{tbody.appendChild(r);}});
+      }});
+    }});
+    var search=document.getElementById("table-search");
+    if(search)search.addEventListener("input",function(){{
+      var q=this.value.toLowerCase();
+      rows.forEach(function(r){{
+        r.classList.toggle("hidden",r.cells[0].textContent.toLowerCase().indexOf(q)===-1);
+      }});
+    }});
+  }})();
+  </script>
 </body>
-</html>"#)?;
+</html>"#
+    )?;
     Ok(())
 }
 
@@ -283,8 +468,8 @@ mod tests {
         render(&mut buf, &one_table_metrics(), 1, 2, 0, 0, None).unwrap();
         let s = String::from_utf8(buf).unwrap();
         assert!(s.contains("<!DOCTYPE html>"));
-        assert!(s.contains("DBScope Schema Report"));
-        assert!(s.contains("Overview"));
+        assert!(s.contains("dbscope"));
+        assert!(s.contains("tables"));
         assert!(s.contains("public.foo"));
         assert!(s.contains("Risk table"));
     }

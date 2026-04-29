@@ -1,6 +1,6 @@
 # Risk model (deterministic scoring)
 
-DBScope uses two risk scores: **table risk** (schema-only) and **impact (blast radius) risk**. Both are deterministic, documented, and in the range 0–1.
+DBScope uses two risk scores: **table risk** (schema-only) and **impact (blast radius) risk**. Both are deterministic, documented, and in the range 0-1.
 
 ---
 
@@ -30,10 +30,10 @@ risk = depth_contrib + cycle_contrib + centrality_contrib   (capped at 1.0)
 
 | Score range | Label    | Meaning |
 |-------------|----------|---------|
-| 0.75 – 1.0  | Critical | Very central and/or deep in FK chain and/or in a cycle |
-| 0.50 – 0.75 | High    | High centrality or depth |
-| 0.25 – 0.50 | Moderate | Some dependency depth or centrality |
-| 0 – 0.25    | Low     | Few dependencies, shallow in graph |
+| 0.75 - 1.0  | Critical | Very central and/or deep in FK chain and/or in a cycle |
+| 0.50 - 0.75 | High    | High centrality or depth |
+| 0.25 - 0.50 | Moderate | Some dependency depth or centrality |
+| 0 - 0.25    | Low     | Few dependencies, shallow in graph |
 | 0           | (Orphan) | No FK in or out |
 
 **Why “0.25” is moderate:** The weighting caps each term (depth 0.4, cycle 0.3, centrality 0.3). A score of 0.25 typically means non-trivial depth or centrality but not at the cap. So 0.25 is “meaningful but not extreme” → Moderate.
@@ -64,10 +64,10 @@ risk_delta = fk_downstream_contrib + index_contrib + queries_contrib   (capped a
 
 | Score range | Label    | Meaning |
 |-------------|----------|---------|
-| 0.75 – 1.0  | Critical | Many downstream tables and/or indexes and/or query usage |
-| 0.50 – 0.75 | High    | Large blast radius |
-| 0.25 – 0.50 | Moderate | Non-trivial impact (e.g. several tables, some queries) |
-| 0 – 0.25    | Low     | Small blast radius |
+| 0.75 - 1.0  | Critical | Many downstream tables and/or indexes and/or query usage |
+| 0.50 - 0.75 | High    | Large blast radius |
+| 0.25 - 0.50 | Moderate | Non-trivial impact (e.g. several tables, some queries) |
+| 0 - 0.25    | Low     | Small blast radius |
 
 **Example: 0.25 (Moderate)**  
 Typical case: a few downstream tables (e.g. 9), some index coupling, and some queries affected (e.g. 7). The normalization (cap at 20 tables, 10 indexes, 50 queries) keeps the score in a comparable band; 0.25 means “meaningful impact, worth reviewing” without being extreme.

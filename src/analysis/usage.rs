@@ -1,4 +1,4 @@
-//! Phase 2: cold/hot tables, cold columns, index suggestions from query usage.
+//! Cold/hot tables, cold columns, index suggestions from query usage.
 
 use crate::core::RawSchema;
 use crate::query_parser::{aggregate_queries, parse_sql, QueryUsage};
@@ -38,7 +38,7 @@ pub struct JoinHotspot {
     pub join_count: u64,
 }
 
-/// Result of Phase 2 usage analysis.
+/// Aggregated usage analysis from parsed query logs.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct UsageReport {
     pub cold_tables: Vec<ColdTable>,
@@ -52,7 +52,9 @@ pub struct UsageReport {
 /// Returns true if the table has an index that includes this column (any position).
 fn column_has_index(raw: &RawSchema, schema: &str, table: &str, column: &str) -> bool {
     raw.indexes.iter().any(|idx| {
-        idx.schema_name == schema && idx.table_name == table && idx.column_names.iter().any(|c| c == column)
+        idx.schema_name == schema
+            && idx.table_name == table
+            && idx.column_names.iter().any(|c| c == column)
     })
 }
 
@@ -65,7 +67,11 @@ pub fn build_usage_from_queries(queries: &[String]) -> (QueryUsage, usize) {
 }
 
 /// Compute usage report from schema and query usage.
-pub fn compute_usage_report(raw: &RawSchema, usage: &QueryUsage, total_queries_parsed: usize) -> UsageReport {
+pub fn compute_usage_report(
+    raw: &RawSchema,
+    usage: &QueryUsage,
+    total_queries_parsed: usize,
+) -> UsageReport {
     let mut cold_tables = Vec::new();
     let mut cold_columns = Vec::new();
     let mut hot_tables: Vec<HotTable> = usage
@@ -86,7 +92,11 @@ pub fn compute_usage_report(raw: &RawSchema, usage: &QueryUsage, total_queries_p
     }
 
     for c in &raw.columns {
-        let key = (c.schema_name.clone(), c.table_name.clone(), c.column_name.clone());
+        let key = (
+            c.schema_name.clone(),
+            c.table_name.clone(),
+            c.column_name.clone(),
+        );
         let (ref_count, _) = usage.column_hits.get(&key).copied().unwrap_or((0, 0));
         if ref_count == 0 {
             cold_columns.push(ColdColumn {

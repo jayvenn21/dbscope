@@ -31,6 +31,8 @@ fn fixture_raw_schema() -> core::RawSchema {
                 column_name: "id".into(),
                 data_type: "int4".into(),
                 ordinal_position: 1,
+                is_nullable: Some(false),
+                default_value: None,
             },
             core::ColumnMeta {
                 schema_name: "public".into(),
@@ -38,21 +40,21 @@ fn fixture_raw_schema() -> core::RawSchema {
                 column_name: "user_id".into(),
                 data_type: "int4".into(),
                 ordinal_position: 1,
+                is_nullable: Some(true),
+                default_value: None,
             },
         ],
         indexes: vec![],
         constraints: vec![],
-        foreign_keys: vec![
-            core::ForeignKeyRef {
-                name: "posts_user_id_fkey".into(),
-                from_schema: "public".into(),
-                from_table: "posts".into(),
-                from_columns: vec!["user_id".into()],
-                to_schema: "public".into(),
-                to_table: "users".into(),
-                to_columns: vec!["id".into()],
-            },
-        ],
+        foreign_keys: vec![core::ForeignKeyRef {
+            name: "posts_user_id_fkey".into(),
+            from_schema: "public".into(),
+            from_table: "posts".into(),
+            from_columns: vec!["user_id".into()],
+            to_schema: "public".into(),
+            to_table: "users".into(),
+            to_columns: vec!["id".into()],
+        }],
         table_stats: None,
         engine_metadata: None,
     }
@@ -80,6 +82,8 @@ fn large_realworld_fixture() -> core::RawSchema {
                 column_name: col.into(),
                 data_type: if col == "name" { "text" } else { "int4" }.into(),
                 ordinal_position: pos,
+                is_nullable: Some(col != "id"),
+                default_value: None,
             });
         }
         indexes.push(core::IndexMeta {
@@ -125,6 +129,8 @@ fn large_realworld_fixture() -> core::RawSchema {
             column_name: "id".into(),
             data_type: "int4".into(),
             ordinal_position: 1,
+            is_nullable: Some(false),
+            default_value: None,
         });
     }
 
@@ -183,8 +189,14 @@ fn pipeline_fixture_to_reports() {
     assert_eq!(graph.table_count(), 3);
     assert_eq!(metrics.len(), 3);
 
-    let users = metrics.iter().find(|m| m.qualified_name == "public.users").unwrap();
-    let standalone = metrics.iter().find(|m| m.qualified_name == "public.standalone").unwrap();
+    let users = metrics
+        .iter()
+        .find(|m| m.qualified_name == "public.users")
+        .unwrap();
+    let standalone = metrics
+        .iter()
+        .find(|m| m.qualified_name == "public.standalone")
+        .unwrap();
     assert!(standalone.is_orphan);
     assert_eq!(standalone.risk_score, 0.0);
     assert_eq!(users.centrality_in, 1);
@@ -196,28 +208,55 @@ fn pipeline_fixture_to_reports() {
     let total_fks = raw.foreign_keys.len();
 
     let mut md = Cursor::new(Vec::new());
-    report::markdown::render(&mut md, &metrics, total_tables, total_columns, total_indexes, total_fks, None).unwrap();
+    report::markdown::render(
+        &mut md,
+        &metrics,
+        total_tables,
+        total_columns,
+        total_indexes,
+        total_fks,
+        None,
+    )
+    .unwrap();
     let md_str = String::from_utf8(md.into_inner()).unwrap();
     assert!(md_str.contains("# DBScope Schema Report"));
     assert!(md_str.contains("public.users"));
     assert!(md_str.contains("public.standalone"));
 
     let mut html = Cursor::new(Vec::new());
-    report::html::render(&mut html, &metrics, total_tables, total_columns, total_indexes, total_fks, None).unwrap();
+    report::html::render(
+        &mut html,
+        &metrics,
+        total_tables,
+        total_columns,
+        total_indexes,
+        total_fks,
+        None,
+    )
+    .unwrap();
     let html_str = String::from_utf8(html.into_inner()).unwrap();
     assert!(html_str.contains("<!DOCTYPE html>"));
     assert!(html_str.contains("public.users"));
     assert!(html_str.contains("Orphan tables"));
 
-    // Phase 1: JSON report
+    // JSON report
     let mut json_buf = Cursor::new(Vec::new());
-    report::json::render(&mut json_buf, &metrics, total_tables, total_columns, total_indexes, total_fks, None).unwrap();
+    report::json::render(
+        &mut json_buf,
+        &metrics,
+        total_tables,
+        total_columns,
+        total_indexes,
+        total_fks,
+        None,
+    )
+    .unwrap();
     let json_str = String::from_utf8(json_buf.into_inner()).unwrap();
     assert!(json_str.contains("\"overview\""));
     assert!(json_str.contains("\"table_metrics\""));
     assert!(json_str.contains("public.users"));
 
-    // Phase 1: Graphviz export
+    // Graphviz export
     let mut dot_buf = Cursor::new(Vec::new());
     report::graphviz::render(&mut dot_buf, &graph, Some(&metrics)).unwrap();
     let dot_str = String::from_utf8(dot_buf.into_inner()).unwrap();
@@ -239,12 +278,24 @@ fn phase2_usage_report_and_render() {
     let usage_report = analysis::compute_usage_report(&raw, &usage, parsed_count);
 
     // standalone was never queried
-    assert!(usage_report.cold_tables.iter().any(|t| t.0 == "public.standalone"));
+    assert!(usage_report
+        .cold_tables
+        .iter()
+        .any(|t| t.0 == "public.standalone"));
     // users and posts were queried
-    assert!(usage_report.hot_tables.iter().any(|h| h.qualified_name == "public.users"));
-    assert!(usage_report.hot_tables.iter().any(|h| h.qualified_name == "public.posts"));
+    assert!(usage_report
+        .hot_tables
+        .iter()
+        .any(|h| h.qualified_name == "public.users"));
+    assert!(usage_report
+        .hot_tables
+        .iter()
+        .any(|h| h.qualified_name == "public.posts"));
     // user_id in WHERE but no index on posts.user_id -> suggestion
-    assert!(usage_report.index_suggestions.iter().any(|s| s.column_name == "user_id" && s.qualified_table == "public.posts"));
+    assert!(usage_report
+        .index_suggestions
+        .iter()
+        .any(|s| s.column_name == "user_id" && s.qualified_table == "public.posts"));
 
     let graph = core::DatabaseGraph::from_raw_schema(raw.clone());
     let metrics = analysis::compute_all_metrics(&graph);
@@ -265,12 +316,12 @@ fn phase2_usage_report_and_render() {
     )
     .unwrap();
     let html_str = String::from_utf8(html.into_inner()).unwrap();
-    assert!(html_str.contains("Queries analyzed"));
+    assert!(html_str.contains("queries"));
     assert!(html_str.contains("Cold tables"));
     assert!(html_str.contains("Index suggestions"));
 }
 
-/// Phase 3: Blast radius — impact report from fixture schema (no DB).
+/// Blast radius: impact report from fixture schema (no DB).
 #[test]
 fn phase3_impact_report() {
     let raw = fixture_raw_schema();
@@ -282,7 +333,9 @@ fn phase3_impact_report() {
     let report = analysis::compute_impact(&target, &graph, &raw, None)
         .expect("public.users should be in graph");
     assert!(
-        report.fk_downstream_tables.contains(&"public.posts".to_string()),
+        report
+            .fk_downstream_tables
+            .contains(&"public.posts".to_string()),
         "changing users should list posts as FK downstream"
     );
     assert!(report.fk_upstream_tables.is_empty());
@@ -293,7 +346,9 @@ fn phase3_impact_report() {
         .expect("public.posts should be in graph");
     assert!(report.fk_downstream_tables.is_empty());
     assert!(
-        report.fk_upstream_tables.contains(&"public.users".to_string()),
+        report
+            .fk_upstream_tables
+            .contains(&"public.users".to_string()),
         "changing posts should list users as FK upstream"
     );
 

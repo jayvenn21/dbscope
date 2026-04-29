@@ -1,5 +1,5 @@
 //! Metrics computed from the unified graph: FK depth, orphans, cycles,
-//! centrality, risk score per table. Phase 2: usage. Phase 3: impact (blast radius).
+//! centrality, risk score per table, usage analysis, and impact (blast radius).
 
 mod impact;
 mod metrics;

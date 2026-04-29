@@ -30,6 +30,14 @@ pub enum SchemaEdge {
     ForeignKey { fk: ForeignKeyRef },
 }
 
+/// Lightweight FK-only subgraph (table nodes + FK edges).
+/// Built once from a DatabaseGraph and reused for depth, cycle, and impact computations.
+pub struct FkGraph {
+    pub graph: Graph<(), ()>,
+    pub old_to_new: HashMap<NodeIndex, NodeIndex>,
+    pub new_to_old: HashMap<NodeIndex, NodeIndex>,
+}
+
 /// Unified graph over schema. Table nodes are the primary keys for analysis.
 pub struct DatabaseGraph {
     pub graph: Graph<SchemaNode, SchemaEdge>,
@@ -46,7 +54,12 @@ impl DatabaseGraph {
         let mut table_node_list = Vec::new();
 
         // Create table nodes (base tables, views, materialized views) and column/index/constraint nodes + edges
-        for t in raw.tables.iter().chain(raw.views.iter()).chain(raw.materialized_views.iter()) {
+        for t in raw
+            .tables
+            .iter()
+            .chain(raw.views.iter())
+            .chain(raw.materialized_views.iter())
+        {
             let q = t.qualified_name();
             let idx = g.add_node(SchemaNode::Table(t.clone()));
             table_indices.insert(q.clone(), idx);
@@ -84,13 +97,7 @@ impl DatabaseGraph {
             if let (Some(&from_idx), Some(&to_idx)) =
                 (table_indices.get(&from_q), table_indices.get(&to_q))
             {
-                g.add_edge(
-                    from_idx,
-                    to_idx,
-                    SchemaEdge::ForeignKey {
-                        fk: fk.clone(),
-                    },
-                );
+                g.add_edge(from_idx, to_idx, SchemaEdge::ForeignKey { fk: fk.clone() });
             }
         }
 
@@ -111,9 +118,9 @@ impl DatabaseGraph {
         self.graph
             .neighbors_directed(table_idx, Direction::Outgoing)
             .filter(|&n| {
-                self.graph.find_edge(table_idx, n).map_or(false, |e| {
-                    matches!(self.graph[e], SchemaEdge::ForeignKey { .. })
-                })
+                self.graph
+                    .find_edge(table_idx, n)
+                    .is_some_and(|e| matches!(self.graph[e], SchemaEdge::ForeignKey { .. }))
             })
             .collect()
     }
@@ -123,9 +130,9 @@ impl DatabaseGraph {
         self.graph
             .neighbors_directed(table_idx, Direction::Incoming)
             .filter(|&n| {
-                self.graph.find_edge(n, table_idx).map_or(false, |e| {
-                    matches!(self.graph[e], SchemaEdge::ForeignKey { .. })
-                })
+                self.graph
+                    .find_edge(n, table_idx)
+                    .is_some_and(|e| matches!(self.graph[e], SchemaEdge::ForeignKey { .. }))
             })
             .collect()
     }
@@ -148,6 +155,41 @@ impl DatabaseGraph {
     pub fn table_count(&self) -> usize {
         self.table_indices.len()
     }
+
+    /// Qualified name for a table node, or None if the index is not a table.
+    pub fn table_name(&self, idx: NodeIndex) -> Option<String> {
+        match &self.graph[idx] {
+            SchemaNode::Table(t) => Some(t.qualified_name()),
+            _ => None,
+        }
+    }
+
+    /// Build the FK-only subgraph once. Reuse for depth, cycle, centrality, and impact.
+    pub fn build_fk_graph(&self) -> FkGraph {
+        let mut g: Graph<(), ()> = Graph::new();
+        let mut old_to_new: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+        for &idx in &self.table_node_list {
+            let new_idx = g.add_node(());
+            old_to_new.insert(idx, new_idx);
+        }
+        for edge in self.graph.edge_references() {
+            if matches!(edge.weight(), SchemaEdge::ForeignKey { .. }) {
+                if let (Some(&a), Some(&b)) = (
+                    old_to_new.get(&edge.source()),
+                    old_to_new.get(&edge.target()),
+                ) {
+                    g.add_edge(a, b, ());
+                }
+            }
+        }
+        let new_to_old: HashMap<NodeIndex, NodeIndex> =
+            old_to_new.iter().map(|(k, v)| (*v, *k)).collect();
+        FkGraph {
+            graph: g,
+            old_to_new,
+            new_to_old,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -159,10 +201,22 @@ mod tests {
     fn fixture_raw_schema() -> RawSchema {
         RawSchema {
             tables: vec![
-                TableMeta { schema_name: "public".into(), table_name: "users".into() },
-                TableMeta { schema_name: "public".into(), table_name: "posts".into() },
-                TableMeta { schema_name: "public".into(), table_name: "comments".into() },
-                TableMeta { schema_name: "public".into(), table_name: "standalone".into() },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "users".into(),
+                },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "posts".into(),
+                },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "comments".into(),
+                },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "standalone".into(),
+                },
             ],
             views: vec![],
             materialized_views: vec![],

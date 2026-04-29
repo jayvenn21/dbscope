@@ -55,13 +55,15 @@ pub async fn extract_schema(connection_uri: &str) -> Result<RawSchema, Connector
         .with_password(password);
 
     let tables = fetch_tables(&client).await?;
+    let views = fetch_views(&client).await?;
+    let materialized_views = fetch_materialized_views(&client).await?;
     let columns = fetch_columns(&client).await?;
     let indexes = fetch_indexes(&client, &tables).await?;
 
     Ok(RawSchema {
         tables,
-        views: Vec::new(),
-        materialized_views: Vec::new(),
+        views,
+        materialized_views,
         columns,
         indexes,
         constraints: Vec::new(),
@@ -74,7 +76,39 @@ pub async fn extract_schema(connection_uri: &str) -> Result<RawSchema, Connector
 async fn fetch_tables(client: &Client) -> Result<Vec<TableMeta>, ConnectorError> {
     let rows = client
         .query(
-            "SELECT database, name FROM system.tables WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema') ORDER BY database, name",
+            "SELECT database, name FROM system.tables WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema') AND engine NOT IN ('View', 'MaterializedView') ORDER BY database, name",
+        )
+        .fetch_all::<(String, String)>()
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(schema_name, table_name)| TableMeta {
+            schema_name,
+            table_name,
+        })
+        .collect())
+}
+
+async fn fetch_views(client: &Client) -> Result<Vec<TableMeta>, ConnectorError> {
+    let rows = client
+        .query(
+            "SELECT database, name FROM system.tables WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema') AND engine = 'View' ORDER BY database, name",
+        )
+        .fetch_all::<(String, String)>()
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(schema_name, table_name)| TableMeta {
+            schema_name,
+            table_name,
+        })
+        .collect())
+}
+
+async fn fetch_materialized_views(client: &Client) -> Result<Vec<TableMeta>, ConnectorError> {
+    let rows = client
+        .query(
+            "SELECT database, name FROM system.tables WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema') AND engine = 'MaterializedView' ORDER BY database, name",
         )
         .fetch_all::<(String, String)>()
         .await?;
@@ -96,13 +130,17 @@ async fn fetch_columns(client: &Client) -> Result<Vec<ColumnMeta>, ConnectorErro
         .await?;
     Ok(rows
         .into_iter()
-        .map(|(schema_name, table_name, column_name, data_type, position)| ColumnMeta {
-            schema_name,
-            table_name,
-            column_name,
-            data_type,
-            ordinal_position: position as i32,
-        })
+        .map(
+            |(schema_name, table_name, column_name, data_type, position)| ColumnMeta {
+                schema_name,
+                table_name,
+                column_name,
+                is_nullable: Some(data_type.starts_with("Nullable")),
+                data_type,
+                ordinal_position: position as i32,
+                default_value: None,
+            },
+        )
         .collect())
 }
 

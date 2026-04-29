@@ -21,7 +21,9 @@ impl Connector for PostgresConnector {
     }
 
     async fn extract_schema(&self, connection_uri: &str) -> Result<RawSchema, ConnectorError> {
-        extract_schema(connection_uri).await.map_err(ConnectorError::from)
+        extract_schema(connection_uri)
+            .await
+            .map_err(ConnectorError::from)
     }
 }
 
@@ -40,6 +42,8 @@ pub async fn extract_schema(connection_uri: &str) -> Result<RawSchema, sqlx::Err
 
 async fn extract_schema_from_pool(pool: &PgPool) -> Result<RawSchema, sqlx::Error> {
     let tables = fetch_tables(pool).await?;
+    let views = fetch_views(pool).await?;
+    let materialized_views = fetch_materialized_views(pool).await?;
     let columns = fetch_columns(pool).await?;
     let indexes = fetch_indexes(pool).await?;
     let constraints = fetch_constraints(pool).await?;
@@ -48,8 +52,8 @@ async fn extract_schema_from_pool(pool: &PgPool) -> Result<RawSchema, sqlx::Erro
 
     Ok(RawSchema {
         tables,
-        views: Vec::new(),
-        materialized_views: Vec::new(),
+        views,
+        materialized_views,
         columns,
         indexes,
         constraints,
@@ -81,10 +85,53 @@ async fn fetch_tables(pool: &PgPool) -> Result<Vec<TableMeta>, sqlx::Error> {
         .collect())
 }
 
-async fn fetch_columns(pool: &PgPool) -> Result<Vec<ColumnMeta>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, (String, String, String, String, i32)>(
+async fn fetch_views(pool: &PgPool) -> Result<Vec<TableMeta>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (String, String)>(
         r#"
-        SELECT table_schema, table_name, column_name, data_type, ordinal_position::int4
+        SELECT table_schema, table_name
+        FROM information_schema.views
+        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+        ORDER BY table_schema, table_name
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(schema_name, table_name)| TableMeta {
+            schema_name,
+            table_name,
+        })
+        .collect())
+}
+
+async fn fetch_materialized_views(pool: &PgPool) -> Result<Vec<TableMeta>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        r#"
+        SELECT schemaname, matviewname
+        FROM pg_matviews
+        WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+        ORDER BY schemaname, matviewname
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(schema_name, table_name)| TableMeta {
+            schema_name,
+            table_name,
+        })
+        .collect())
+}
+
+async fn fetch_columns(pool: &PgPool) -> Result<Vec<ColumnMeta>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (String, String, String, String, i32, String, Option<String>)>(
+        r#"
+        SELECT table_schema, table_name, column_name, data_type, ordinal_position::int4,
+               is_nullable, column_default
         FROM information_schema.columns
         WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
         ORDER BY table_schema, table_name, ordinal_position
@@ -95,15 +142,27 @@ async fn fetch_columns(pool: &PgPool) -> Result<Vec<ColumnMeta>, sqlx::Error> {
 
     Ok(rows
         .into_iter()
-        .map(|(schema_name, table_name, column_name, data_type, ordinal_position)| {
-            ColumnMeta {
+        .map(
+            |(
                 schema_name,
                 table_name,
                 column_name,
                 data_type,
                 ordinal_position,
-            }
-        })
+                is_nullable,
+                default_value,
+            )| {
+                ColumnMeta {
+                    schema_name,
+                    table_name,
+                    column_name,
+                    data_type,
+                    ordinal_position,
+                    is_nullable: Some(is_nullable == "YES"),
+                    default_value,
+                }
+            },
+        )
         .collect())
 }
 
@@ -185,15 +244,7 @@ async fn fetch_constraints(pool: &PgPool) -> Result<Vec<ConstraintMeta>, sqlx::E
 }
 
 async fn fetch_foreign_keys(pool: &PgPool) -> Result<Vec<ForeignKeyRef>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, (
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-    )>(
+    let rows = sqlx::query_as::<_, (String, String, String, String, String, String, String)>(
         r#"
         SELECT
             tc.constraint_name,
@@ -216,20 +267,18 @@ async fn fetch_foreign_keys(pool: &PgPool) -> Result<Vec<ForeignKeyRef>, sqlx::E
     .fetch_all(pool)
     .await?;
 
-    // Group by constraint name to build (from_columns, to_columns) lists
-    let mut by_name: std::collections::HashMap<
+    type FkAccum = (
         String,
-        (String, String, String, Vec<String>, String, String, Vec<String>),
-    > = std::collections::HashMap::new();
-    for (
-        constraint_name,
-        from_schema,
-        from_table,
-        from_column,
-        to_schema,
-        to_table,
-        to_column,
-    ) in rows
+        String,
+        String,
+        Vec<String>,
+        String,
+        String,
+        Vec<String>,
+    );
+    let mut by_name: std::collections::HashMap<String, FkAccum> = std::collections::HashMap::new();
+    for (constraint_name, from_schema, from_table, from_column, to_schema, to_table, to_column) in
+        rows
     {
         let key = format!("{}.{}.{}", from_schema, from_table, constraint_name);
         let entry = by_name.entry(key).or_insert_with(|| {
@@ -280,16 +329,16 @@ async fn fetch_table_stats(pool: &PgPool) -> Result<Option<Vec<TableStats>>, sql
 
     let table_stats: Vec<TableStats> = rows
         .into_iter()
-        .map(|(schema_name, table_name, n_live_tup, n_tup_ins, n_tup_upd, n_tup_del)| {
-            TableStats {
+        .map(
+            |(schema_name, table_name, n_live_tup, n_tup_ins, n_tup_upd, n_tup_del)| TableStats {
                 schema_name,
                 table_name,
                 row_estimate: n_live_tup.max(0) as u64,
                 n_tup_ins: n_tup_ins.max(0) as u64,
                 n_tup_upd: n_tup_upd.max(0) as u64,
                 n_tup_del: n_tup_del.max(0) as u64,
-            }
-        })
+            },
+        )
         .collect();
 
     Ok(Some(table_stats))

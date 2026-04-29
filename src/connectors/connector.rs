@@ -8,8 +8,13 @@ use crate::core::RawSchema;
 
 #[derive(Error, Debug)]
 pub enum ConnectorError {
-    #[error("Unsupported database scheme: {0}. Use postgres://, mysql://, sqlite://, or clickhouse://.")]
+    #[error(
+        "Unsupported database scheme: {0}. Use postgres://, mysql://, sqlite://, or clickhouse://."
+    )]
     UnsupportedScheme(String),
+
+    #[error("{0}")]
+    Connection(String),
 
     #[error("Postgres: {0}")]
     Postgres(#[from] sqlx::Error),

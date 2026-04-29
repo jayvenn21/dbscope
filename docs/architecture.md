@@ -14,14 +14,14 @@ DBScope is a **database-agnostic relational graph intelligence engine**. Postgre
 
 All connectors normalize their engine’s catalog into the same shape: **`RawSchema`** (in `src/core/schema.rs`).
 
-- **Tables** – base tables (`schema_name`, `table_name`)
-- **Views** – logical views (same shape as table; columns optional)
-- **Materialized views** – same shape as table
-- **Columns** – per-table/view with `data_type`, `ordinal_position`
-- **Indexes** – name, table, column list, uniqueness
-- **Constraints** – PRIMARY KEY, UNIQUE, CHECK (FKs are separate)
-- **Foreign keys** – from/to (schema, table, columns)
-- **engine_metadata** – optional; core never reads it. Connectors may set it for external tooling.
+- **Tables**: base tables (`schema_name`, `table_name`)
+- **Views**: logical views (same shape as table; columns optional)
+- **Materialized views**: same shape as table
+- **Columns**: per-table/view with `data_type`, `ordinal_position`
+- **Indexes**: name, table, column list, uniqueness
+- **Constraints**: PRIMARY KEY, UNIQUE, CHECK (FKs are separate)
+- **Foreign keys**: from/to (schema, table, columns)
+- **engine_metadata**: optional; core never reads it. Connectors may set it for external tooling.
 
 Engine-specific details (e.g. Postgres partial indexes, MySQL engine types) stay in the connector. The core never branches on database type.
 
@@ -37,10 +37,10 @@ pub trait Connector: Send + Sync {
 }
 ```
 
-- **Postgres** – `postgres://` / `postgresql://` → `PostgresConnector` (information_schema + pg_catalog)
-- **MySQL** – `mysql://` → `MysqlConnector` (information_schema: TABLES, COLUMNS, STATISTICS, TABLE_CONSTRAINTS, KEY_COLUMN_USAGE)
-- **SQLite** – `sqlite://` / `file://` → `SqliteConnector` (sqlite_master + PRAGMA table_info/index_list/index_info/foreign_key_list; schema name `main`)
-- **ClickHouse** – `clickhouse://` → `ClickhouseConnector` (system.tables, system.columns; no FKs; indexes from sorting_key/primary_key)
+- **Postgres**: `postgres://` / `postgresql://` → `PostgresConnector` (information_schema + pg_catalog)
+- **MySQL**: `mysql://` → `MysqlConnector` (information_schema: TABLES, COLUMNS, STATISTICS, TABLE_CONSTRAINTS, KEY_COLUMN_USAGE)
+- **SQLite**: `sqlite://` / `file://` → `SqliteConnector` (sqlite_master + PRAGMA table_info/index_list/index_info/foreign_key_list; schema name `main`)
+- **ClickHouse**: `clickhouse://` → `ClickhouseConnector` (system.tables, system.columns; no FKs; indexes from sorting_key/primary_key)
 
 ## Dispatch by URI
 
@@ -56,7 +56,7 @@ The scheme of the URI selects the connector (`postgres`, `postgresql`, etc.). Un
 
 1. **Connector** → `RawSchema`
 2. **Core** → `DatabaseGraph::from_raw_schema(raw)` (graph over tables, columns, indexes, FKs)
-3. **Analysis** → metrics, impact, usage (query log) — all operate on the graph and raw schema
+3. **Analysis** → metrics, impact, usage (query log), all operating on the graph and raw schema
 4. **Report** → markdown, HTML, JSON, Graphviz
 
 No step after (1) knows which database was used. Adding a new engine means adding a connector that produces `RawSchema`; the rest of the stack is reused.

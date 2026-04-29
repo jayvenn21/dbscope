@@ -2,4 +2,7 @@
 
 mod extract;
 
-pub use extract::{aggregate_queries, parse_sql, ParsedQuery, QualifiedColumn, QualifiedTable, QueryUsage};
+pub use extract::{
+    aggregate_queries, parse_sql, parse_sql_with_dialect, ParsedQuery, QualifiedColumn,
+    QualifiedTable, QueryUsage,
+};

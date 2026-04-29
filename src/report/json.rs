@@ -1,5 +1,5 @@
 //! JSON report: overview, table metrics, optional usage summary.
-//! Phase 1 output as specified in README.
+//! JSON report output.
 
 use std::io::Write;
 
@@ -62,7 +62,7 @@ pub struct JoinHotspotRef {
     pub join_count: u64,
 }
 
-/// Schema complexity 0–1: higher when more tables and FKs.
+/// Schema complexity 0-1: higher when more tables and FKs.
 fn schema_complexity_score(total_tables: usize, total_fks: usize) -> f64 {
     if total_tables == 0 {
         return 0.0;
@@ -88,16 +88,52 @@ pub fn render<W: Write>(
     } else {
         metrics.iter().map(|m| m.display_risk()).sum::<f64>() / metrics.len() as f64
     };
-    let critical = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::Critical).count();
-    let high = metrics.iter().filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::High).count();
+    let critical = metrics
+        .iter()
+        .filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::Critical)
+        .count();
+    let high = metrics
+        .iter()
+        .filter(|m| TableRisk::from_score(m.display_risk()) == TableRisk::High)
+        .count();
 
     let usage_summary = usage.map(|u| UsageSummary {
         total_queries_parsed: u.total_queries_parsed,
         cold_tables: u.cold_tables.iter().map(|t| t.0.clone()).collect(),
-        cold_columns: u.cold_columns.iter().map(|c| ColdColumnRef { qualified_table: c.qualified_table.clone(), column_name: c.column_name.clone() }).collect(),
-        hot_tables: u.hot_tables.iter().map(|h| HotTableRef { qualified_name: h.qualified_name.clone(), query_count: h.query_count }).collect(),
-        index_suggestions: u.index_suggestions.iter().map(|s| IndexSuggestionRef { qualified_table: s.qualified_table.clone(), column_name: s.column_name.clone(), in_where_count: s.in_where_count }).collect(),
-        join_hotspots: u.join_hotspots.iter().map(|j| JoinHotspotRef { table_a: j.table_a.clone(), table_b: j.table_b.clone(), join_count: j.join_count }).collect(),
+        cold_columns: u
+            .cold_columns
+            .iter()
+            .map(|c| ColdColumnRef {
+                qualified_table: c.qualified_table.clone(),
+                column_name: c.column_name.clone(),
+            })
+            .collect(),
+        hot_tables: u
+            .hot_tables
+            .iter()
+            .map(|h| HotTableRef {
+                qualified_name: h.qualified_name.clone(),
+                query_count: h.query_count,
+            })
+            .collect(),
+        index_suggestions: u
+            .index_suggestions
+            .iter()
+            .map(|s| IndexSuggestionRef {
+                qualified_table: s.qualified_table.clone(),
+                column_name: s.column_name.clone(),
+                in_where_count: s.in_where_count,
+            })
+            .collect(),
+        join_hotspots: u
+            .join_hotspots
+            .iter()
+            .map(|j| JoinHotspotRef {
+                table_a: j.table_a.clone(),
+                table_b: j.table_b.clone(),
+                join_count: j.join_count,
+            })
+            .collect(),
     });
 
     let report = JsonReport {
@@ -115,5 +151,5 @@ pub fn render<W: Write>(
         usage: usage_summary,
     };
 
-    serde_json::to_writer_pretty(w, &report).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    serde_json::to_writer_pretty(w, &report).map_err(std::io::Error::other)
 }

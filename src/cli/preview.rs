@@ -23,16 +23,10 @@ pub async fn run_preview(
 
     let graph_before = core::DatabaseGraph::from_raw_schema(raw_before.clone());
     let graph_after = core::DatabaseGraph::from_raw_schema(raw_after.clone());
-    let metrics_before = analysis::compute_all_metrics_with_operational(
-        &graph_before,
-        Some(&raw_before),
-        None,
-    );
-    let metrics_after = analysis::compute_all_metrics_with_operational(
-        &graph_after,
-        Some(&raw_after),
-        None,
-    );
+    let metrics_before =
+        analysis::compute_all_metrics_with_operational(&graph_before, Some(&raw_before), None);
+    let metrics_after =
+        analysis::compute_all_metrics_with_operational(&graph_after, Some(&raw_after), None);
 
     let before_tables: HashSet<String> = raw_before
         .tables
@@ -64,7 +58,9 @@ pub async fn run_preview(
     let mut impacted: HashSet<String> = removed.iter().cloned().collect();
     for table_name in &removed {
         if let Some(target) = ImpactTarget::parse(table_name) {
-            if let Some(report) = analysis::compute_impact(&target, &graph_before, &raw_before, None) {
+            if let Some(report) =
+                analysis::compute_impact(&target, &graph_before, &raw_before, None)
+            {
                 for t in &report.fk_downstream_tables {
                     impacted.insert(t.clone());
                 }
@@ -79,12 +75,17 @@ pub async fn run_preview(
 
     let queries_broken = if let Some(path) = query_log_path {
         let content = std::fs::read_to_string(path)?;
-        let queries: Vec<String> = content.lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let queries: Vec<String> = content
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         let removed_set: HashSet<&str> = removed.iter().map(|s| s.as_str()).collect();
         let mut broken = 0;
         for q in &queries {
             if let Some(parsed) = query_parser::parse_sql(q) {
-                let refs: HashSet<String> = parsed.tables.iter().map(|t| t.qualified_name()).collect();
+                let refs: HashSet<String> =
+                    parsed.tables.iter().map(|t| t.qualified_name()).collect();
                 if refs.iter().any(|r| removed_set.contains(r.as_str())) {
                     broken += 1;
                 }
@@ -100,39 +101,60 @@ pub async fn run_preview(
     eprintln!("Change Summary:");
     eprintln!("  - Tables removed: {}", tables_removed);
     eprintln!("  - FKs removed: {}", fks_removed);
-    eprintln!("  - New cycles: {} {}", new_cycles, if new_cycles > 0 { "(critical)" } else { "" });
+    eprintln!(
+        "  - New cycles: {} {}",
+        new_cycles,
+        if new_cycles > 0 { "(critical)" } else { "" }
+    );
     eprintln!("  - Risk delta: {:+.2}", risk_delta);
     eprintln!();
     eprintln!("Blast Radius:");
-    eprintln!("  - {}% of schema graph impacted ({} of {} tables)", blast_radius_percent.round(), impacted.len(), before_tables.len());
+    eprintln!(
+        "  - {}% of schema graph impacted ({} of {} tables)",
+        blast_radius_percent.round(),
+        impacted.len(),
+        before_tables.len()
+    );
     if let Some(n) = queries_broken {
         eprintln!("  - {} observed query/queries broken", n);
     }
     eprintln!();
 
-    let pol = policy_path.map(|p| policy::Policy::load(p)).unwrap_or_default();
+    let pol = policy_path.map(policy::Policy::load).unwrap_or_default();
     let mut fail = false;
     if max_risk_after > pol.max_table_risk {
         eprintln!("Policy:");
-        eprintln!("  ❌ FAIL: max table risk {:.2} exceeds threshold {:.2}", max_risk_after, pol.max_table_risk);
+        eprintln!(
+            "  ❌ FAIL: max table risk {:.2} exceeds threshold {:.2}",
+            max_risk_after, pol.max_table_risk
+        );
         fail = true;
     }
     if pol.no_cycles && cycles_after > 0 {
         eprintln!("Policy:");
-        eprintln!("  ❌ FAIL: schema has {} table(s) in cycles (no_cycles: true)", cycles_after);
+        eprintln!(
+            "  ❌ FAIL: schema has {} table(s) in cycles (no_cycles: true)",
+            cycles_after
+        );
         fail = true;
     }
     if pol.no_orphans {
         let orphans_after = metrics_after.iter().filter(|m| m.is_orphan).count();
         if orphans_after > 0 {
             eprintln!("Policy:");
-            eprintln!("  ❌ FAIL: schema has {} orphan(s) (no_orphans: true)", orphans_after);
+            eprintln!(
+                "  ❌ FAIL: schema has {} orphan(s) (no_orphans: true)",
+                orphans_after
+            );
             fail = true;
         }
     }
     if blast_radius_percent > pol.max_blast_radius_percent {
         eprintln!("Policy:");
-        eprintln!("  ❌ FAIL: blast radius {:.0}% exceeds max {:.0}%", blast_radius_percent, pol.max_blast_radius_percent);
+        eprintln!(
+            "  ❌ FAIL: blast radius {:.0}% exceeds max {:.0}%",
+            blast_radius_percent, pol.max_blast_radius_percent
+        );
         fail = true;
     }
     if !fail && (policy_path.is_some() || pol.max_table_risk < 1.0) {
@@ -141,7 +163,7 @@ pub async fn run_preview(
     }
 
     if fail {
-        std::process::exit(1);
+        anyhow::bail!("Migration preview: policy violation detected. See details above.");
     }
     Ok(())
 }

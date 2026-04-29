@@ -4,7 +4,7 @@
 mod graph;
 mod schema;
 
-pub use graph::{DatabaseGraph, SchemaEdge, SchemaNode};
+pub use graph::{DatabaseGraph, FkGraph, SchemaEdge, SchemaNode};
 pub use schema::{
     ColumnMeta, ConstraintMeta, ForeignKeyRef, IndexMeta, RawSchema, TableMeta, TableStats,
 };

@@ -2,14 +2,14 @@
 
 use petgraph::algo::is_cyclic_directed;
 use petgraph::graph::NodeIndex;
-use petgraph::visit::{EdgeRef, IntoNeighbors, Reversed};
+use petgraph::visit::{IntoNeighbors, Reversed};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::core::{DatabaseGraph, RawSchema, SchemaEdge, SchemaNode};
 use super::usage::UsageReport;
+use crate::core::{DatabaseGraph, FkGraph, RawSchema, SchemaNode};
 
 /// Explainable breakdown of table risk score. Industry-credible: weighted components.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RiskScoreBreakdown {
     /// FK depth contribution (max 0.4): (depth_out + depth_in) / 20, capped.
     pub depth_contrib: f64,
@@ -22,21 +22,18 @@ pub struct RiskScoreBreakdown {
 }
 
 /// Per-table metrics for reporting.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TableMetrics {
     pub qualified_name: String,
-    pub fk_depth_out: u32,   // max path length following outgoing FKs
-    pub fk_depth_in: u32,    // max path length following incoming FKs
-    pub is_orphan: bool,     // no FK in and no FK out
+    pub fk_depth_out: u32,
+    pub fk_depth_in: u32,
+    pub is_orphan: bool,
     pub in_cycle: bool,
-    pub centrality_out: u32, // number of tables this table references (out degree)
-    pub centrality_in: u32,  // number of tables that reference this (in degree)
+    pub centrality_out: u32,
+    pub centrality_in: u32,
     pub risk_score: f64,
-    /// How the risk score was computed (explainable scoring).
     pub risk_breakdown: Option<RiskScoreBreakdown>,
-    /// Operational weight (0.2–1.0) when table_stats or query usage available. effective_risk = risk_score * this.
     pub operational_weight: Option<f64>,
-    /// risk_score * operational_weight when operational weighting applied; else None.
     pub effective_risk: Option<f64>,
 }
 
@@ -48,7 +45,7 @@ impl TableMetrics {
 }
 
 /// Risk level for display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TableRisk {
     Low,
     Medium,
@@ -79,42 +76,22 @@ impl TableRisk {
     }
 }
 
-/// Build a subgraph of only table nodes and FK edges for depth/cycle/centrality.
-fn fk_table_graph(graph: &DatabaseGraph) -> (petgraph::Graph<(), ()>, HashMap<NodeIndex, NodeIndex>) {
-    use petgraph::graph::Graph;
-    let mut g: Graph<(), ()> = Graph::new();
-    let mut old_to_new: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-    for &idx in &graph.table_node_list {
-        let new_idx = g.add_node(());
-        old_to_new.insert(idx, new_idx);
-    }
-    for edge in graph.graph.edge_references() {
-        let w: &SchemaEdge = edge.weight();
-        if matches!(w, SchemaEdge::ForeignKey { .. }) {
-            if let (Some(&a), Some(&b)) = (old_to_new.get(&edge.source()), old_to_new.get(&edge.target())) {
-                g.add_edge(a, b, ());
-            }
-        }
-    }
-    (g, old_to_new)
-}
-
 /// Max distance (depth) following outgoing FK edges from `start`, BFS.
-fn max_depth_out(graph: &DatabaseGraph, start: NodeIndex) -> u32 {
-    let (fk_graph, old_to_new) = fk_table_graph(graph);
-    let start_new = match old_to_new.get(&start) {
+/// Uses the pre-built FK subgraph for O(V+E) per call instead of rebuilding.
+fn max_depth_out(fk: &FkGraph, start: NodeIndex) -> u32 {
+    let start_new = match fk.old_to_new.get(&start) {
         Some(&n) => n,
         None => return 0,
     };
-    let mut dist: HashMap<petgraph::graph::NodeIndex, u32> = HashMap::new();
+    let mut dist: HashMap<NodeIndex, u32> = HashMap::new();
     dist.insert(start_new, 0);
     let mut queue = VecDeque::new();
     queue.push_back(start_new);
     while let Some(n) = queue.pop_front() {
         let d = dist[&n];
-        for neighbor in fk_graph.neighbors(n) {
-            if !dist.contains_key(&neighbor) {
-                dist.insert(neighbor, d + 1);
+        for neighbor in fk.graph.neighbors(n) {
+            if let std::collections::hash_map::Entry::Vacant(e) = dist.entry(neighbor) {
+                e.insert(d + 1);
                 queue.push_back(neighbor);
             }
         }
@@ -123,22 +100,21 @@ fn max_depth_out(graph: &DatabaseGraph, start: NodeIndex) -> u32 {
 }
 
 /// Max distance following incoming FK edges from `start`, BFS on reversed graph.
-fn max_depth_in(graph: &DatabaseGraph, start: NodeIndex) -> u32 {
-    let (fk_graph, old_to_new) = fk_table_graph(graph);
-    let start_new = match old_to_new.get(&start) {
+fn max_depth_in(fk: &FkGraph, start: NodeIndex) -> u32 {
+    let start_new = match fk.old_to_new.get(&start) {
         Some(&n) => n,
         None => return 0,
     };
-    let rev = Reversed(&fk_graph);
-    let mut dist: HashMap<petgraph::graph::NodeIndex, u32> = HashMap::new();
+    let rev = Reversed(&fk.graph);
+    let mut dist: HashMap<NodeIndex, u32> = HashMap::new();
     dist.insert(start_new, 0);
     let mut queue = VecDeque::new();
     queue.push_back(start_new);
     while let Some(n) = queue.pop_front() {
         let d = dist[&n];
         for neighbor in rev.neighbors(n) {
-            if !dist.contains_key(&neighbor) {
-                dist.insert(neighbor, d + 1);
+            if let std::collections::hash_map::Entry::Vacant(e) = dist.entry(neighbor) {
+                e.insert(d + 1);
                 queue.push_back(neighbor);
             }
         }
@@ -147,18 +123,16 @@ fn max_depth_in(graph: &DatabaseGraph, start: NodeIndex) -> u32 {
 }
 
 /// Find all table node indices that participate in a cycle (in the FK table graph).
-fn tables_in_cycles(graph: &DatabaseGraph) -> HashSet<NodeIndex> {
-    let (fk_graph, old_to_new) = fk_table_graph(graph);
-    if !is_cyclic_directed(&fk_graph) {
+fn tables_in_cycles(fk: &FkGraph) -> HashSet<NodeIndex> {
+    if !is_cyclic_directed(&fk.graph) {
         return HashSet::new();
     }
-    let scc = petgraph::algo::kosaraju_scc(&fk_graph);
-    let new_to_old: HashMap<NodeIndex, NodeIndex> = old_to_new.iter().map(|(k, v)| (*v, *k)).collect();
+    let scc = petgraph::algo::kosaraju_scc(&fk.graph);
     let mut in_cycle = HashSet::new();
     for comp in scc {
         if comp.len() > 1 {
             for &new_idx in &comp {
-                if let Some(&old_idx) = new_to_old.get(&new_idx) {
+                if let Some(&old_idx) = fk.new_to_old.get(&new_idx) {
                     in_cycle.insert(old_idx);
                 }
             }
@@ -203,7 +177,8 @@ fn risk_score_with_breakdown(
     }
     let depth_contrib = ((fk_depth_out + fk_depth_in) as f64 / 20.0).min(DEPTH_WEIGHT_CAP);
     let cycle_contrib = if in_cycle { CYCLE_WEIGHT } else { 0.0 };
-    let centrality_contrib = ((centrality_in + centrality_out) as f64 / 30.0).min(CENTRALITY_WEIGHT_CAP);
+    let centrality_contrib =
+        ((centrality_in + centrality_out) as f64 / 30.0).min(CENTRALITY_WEIGHT_CAP);
     let raw = (depth_contrib + cycle_contrib + centrality_contrib).min(1.0);
     let formula = format!(
         "risk = depth({:.2}) + cycle({:.2}) + centrality({:.2}) = {:.2}",
@@ -223,7 +198,8 @@ fn compute_all_metrics_inner(
     raw: Option<&RawSchema>,
     usage: Option<&UsageReport>,
 ) -> Vec<TableMetrics> {
-    let in_cycle_set = tables_in_cycles(graph);
+    let fk = graph.build_fk_graph();
+    let in_cycle_set = tables_in_cycles(&fk);
     let mut results = Vec::with_capacity(graph.table_count());
     for &table_idx in &graph.table_node_list {
         let qualified_name = match &graph.graph[table_idx] {
@@ -233,8 +209,8 @@ fn compute_all_metrics_inner(
         let fk_out = graph.fk_out_neighbors(table_idx).len();
         let fk_in = graph.fk_in_neighbors(table_idx).len();
         let is_orphan = fk_out == 0 && fk_in == 0;
-        let fk_depth_out = max_depth_out(graph, table_idx);
-        let fk_depth_in = max_depth_in(graph, table_idx);
+        let fk_depth_out = max_depth_out(&fk, table_idx);
+        let fk_depth_in = max_depth_in(&fk, table_idx);
         let in_cycle = in_cycle_set.contains(&table_idx);
         let (centrality_in, centrality_out) = centrality(graph, table_idx);
         let (risk_score, risk_breakdown) = risk_score_with_breakdown(
@@ -245,12 +221,8 @@ fn compute_all_metrics_inner(
             centrality_out,
             is_orphan,
         );
-        let (operational_weight, effective_risk) = compute_operational(
-            &qualified_name,
-            risk_score,
-            raw,
-            usage,
-        );
+        let (operational_weight, effective_risk) =
+            compute_operational(&qualified_name, risk_score, raw, usage);
         results.push(TableMetrics {
             qualified_name,
             fk_depth_out,
@@ -280,12 +252,14 @@ fn compute_operational(
         s.iter()
             .find(|t| format!("{}.{}", t.schema_name, t.table_name) == qualified_name)
     });
-    let query_count = usage.and_then(|u| {
-        u.hot_tables
-            .iter()
-            .find(|h| h.qualified_name == qualified_name)
-            .map(|h| h.query_count)
-    }).unwrap_or(0);
+    let query_count = usage
+        .and_then(|u| {
+            u.hot_tables
+                .iter()
+                .find(|h| h.qualified_name == qualified_name)
+                .map(|h| h.query_count)
+        })
+        .unwrap_or(0);
 
     let has_any = row_estimate.is_some() || usage.is_some();
     if !has_any {
@@ -302,7 +276,14 @@ fn compute_operational(
         })
         .unwrap_or(0.0);
     let max_q = usage
-        .map(|u| u.hot_tables.iter().map(|h| h.query_count).max().unwrap_or(1).max(1))
+        .map(|u| {
+            u.hot_tables
+                .iter()
+                .map(|h| h.query_count)
+                .max()
+                .unwrap_or(1)
+                .max(1)
+        })
         .unwrap_or(1);
     let query_factor = (query_count as f64 / max_q as f64).min(1.0);
 
@@ -334,10 +315,22 @@ mod tests {
     fn fixture_raw_schema() -> RawSchema {
         RawSchema {
             tables: vec![
-                TableMeta { schema_name: "public".into(), table_name: "users".into() },
-                TableMeta { schema_name: "public".into(), table_name: "posts".into() },
-                TableMeta { schema_name: "public".into(), table_name: "comments".into() },
-                TableMeta { schema_name: "public".into(), table_name: "standalone".into() },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "users".into(),
+                },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "posts".into(),
+                },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "comments".into(),
+                },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "standalone".into(),
+                },
             ],
             views: vec![],
             materialized_views: vec![],
@@ -373,7 +366,10 @@ mod tests {
     fn metrics_orphan_has_zero_risk_and_flagged() {
         let graph = DatabaseGraph::from_raw_schema(fixture_raw_schema());
         let metrics = compute_all_metrics(&graph);
-        let standalone = metrics.iter().find(|m| m.qualified_name == "public.standalone").unwrap();
+        let standalone = metrics
+            .iter()
+            .find(|m| m.qualified_name == "public.standalone")
+            .unwrap();
         assert!(standalone.is_orphan);
         assert_eq!(standalone.risk_score, 0.0);
         assert!(!standalone.in_cycle);
@@ -384,12 +380,18 @@ mod tests {
         let graph = DatabaseGraph::from_raw_schema(fixture_raw_schema());
         let metrics = compute_all_metrics(&graph);
         // comments -> posts -> users: comments has out-depth 2 (comments, posts, users)
-        let comments = metrics.iter().find(|m| m.qualified_name == "public.comments").unwrap();
+        let comments = metrics
+            .iter()
+            .find(|m| m.qualified_name == "public.comments")
+            .unwrap();
         assert_eq!(comments.fk_depth_out, 2);
         assert_eq!(comments.centrality_out, 1);
         assert_eq!(comments.centrality_in, 0);
         // users: only incoming FKs, so in-depth from users reaches posts and comments
-        let users = metrics.iter().find(|m| m.qualified_name == "public.users").unwrap();
+        let users = metrics
+            .iter()
+            .find(|m| m.qualified_name == "public.users")
+            .unwrap();
         assert_eq!(users.fk_depth_in, 2);
         assert_eq!(users.centrality_in, 1);
     }
@@ -399,7 +401,10 @@ mod tests {
         let graph = DatabaseGraph::from_raw_schema(fixture_raw_schema());
         let metrics = compute_all_metrics(&graph);
         assert_eq!(metrics.len(), 4);
-        let standalone = metrics.iter().find(|m| m.qualified_name == "public.standalone").unwrap();
+        let standalone = metrics
+            .iter()
+            .find(|m| m.qualified_name == "public.standalone")
+            .unwrap();
         assert_eq!(TableRisk::from_score(standalone.risk_score), TableRisk::Low);
     }
 
@@ -408,9 +413,18 @@ mod tests {
         // Cycle: a -> b -> c -> a
         let raw = RawSchema {
             tables: vec![
-                TableMeta { schema_name: "public".into(), table_name: "a".into() },
-                TableMeta { schema_name: "public".into(), table_name: "b".into() },
-                TableMeta { schema_name: "public".into(), table_name: "c".into() },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "a".into(),
+                },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "b".into(),
+                },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "c".into(),
+                },
             ],
             views: vec![],
             materialized_views: vec![],

@@ -1,4 +1,4 @@
-//! Phase 5: Summarize architecture — human-readable overview (no AI, rule-based).
+//! Summarize architecture: human-readable overview, rule-based.
 
 use std::path::Path;
 
@@ -9,6 +9,7 @@ use crate::core;
 pub async fn run_summarize(
     schema_uri: &str,
     query_log_path: Option<&Path>,
+    json_output: bool,
 ) -> Result<(), anyhow::Error> {
     let raw: core::RawSchema = connectors::extract_schema(schema_uri).await?;
     let graph = core::DatabaseGraph::from_raw_schema(raw.clone());
@@ -20,11 +21,8 @@ pub async fn run_summarize(
     } else {
         None
     };
-    let metrics = analysis::compute_all_metrics_with_operational(
-        &graph,
-        Some(&raw),
-        usage_report.as_ref(),
-    );
+    let metrics =
+        analysis::compute_all_metrics_with_operational(&graph, Some(&raw), usage_report.as_ref());
 
     let total_tables = metrics.len();
     let total_columns = raw.columns.len();
@@ -32,17 +30,56 @@ pub async fn run_summarize(
     let orphans: Vec<_> = metrics.iter().filter(|m| m.is_orphan).collect();
     let in_cycle: Vec<_> = metrics.iter().filter(|m| m.in_cycle).collect();
     let risk_for = |m: &analysis::TableMetrics| m.effective_risk.unwrap_or(m.risk_score);
-    let critical = metrics.iter().filter(|m| TableRisk::from_score(risk_for(m)) == TableRisk::Critical).count();
-    let high = metrics.iter().filter(|m| TableRisk::from_score(risk_for(m)) == TableRisk::High).count();
+    let critical = metrics
+        .iter()
+        .filter(|m| TableRisk::from_score(risk_for(m)) == TableRisk::Critical)
+        .count();
+    let high = metrics
+        .iter()
+        .filter(|m| TableRisk::from_score(risk_for(m)) == TableRisk::High)
+        .count();
     let overall_risk = if metrics.is_empty() {
         0.0
     } else {
-        metrics.iter().map(|m| risk_for(m)).sum::<f64>() / metrics.len() as f64
+        metrics.iter().map(risk_for).sum::<f64>() / metrics.len() as f64
     };
 
+    if json_output {
+        let mut json = serde_json::json!({
+            "tables": total_tables,
+            "columns": total_columns,
+            "foreign_keys": total_fks,
+            "views": raw.views.len(),
+            "materialized_views": raw.materialized_views.len(),
+            "overall_risk": overall_risk,
+            "critical_count": critical,
+            "high_count": high,
+            "orphan_count": orphans.len(),
+            "cycle_count": in_cycle.len(),
+            "orphan_tables": orphans.iter().map(|m| &m.qualified_name).collect::<Vec<_>>(),
+            "cycle_tables": in_cycle.iter().map(|m| &m.qualified_name).collect::<Vec<_>>(),
+        });
+        if let Some(ref report) = usage_report {
+            json["query_log"] = serde_json::json!({
+                "total_queries_parsed": report.total_queries_parsed,
+                "cold_tables_count": report.cold_tables.len(),
+                "hot_tables_count": report.hot_tables.len(),
+                "index_suggestions_count": report.index_suggestions.len(),
+            });
+        }
+        println!("{}", serde_json::to_string_pretty(&json)?);
+        return Ok(());
+    }
+
     println!("## Schema summary");
-    println!("  Tables: {}  Columns: {}  Foreign keys: {}", total_tables, total_columns, total_fks);
-    println!("  Overall risk score: {:.2}  (Critical: {}, High: {})", overall_risk, critical, high);
+    println!(
+        "  Tables: {}  Columns: {}  Foreign keys: {}",
+        total_tables, total_columns, total_fks
+    );
+    println!(
+        "  Overall risk score: {:.2}  (Critical: {}, High: {})",
+        overall_risk, critical, high
+    );
     if !orphans.is_empty() {
         println!("  Orphan tables (no FK in/out): {}", orphans.len());
         for m in orphans.iter().take(10) {
@@ -63,14 +100,23 @@ pub async fn run_summarize(
         println!();
         println!("## Query log summary");
         println!("  Queries parsed: {}", report.total_queries_parsed);
-        println!("  Cold tables (never referenced): {}", report.cold_tables.len());
+        println!(
+            "  Cold tables (never referenced): {}",
+            report.cold_tables.len()
+        );
         for t in report.cold_tables.iter().take(5) {
             println!("    - {}", t.0);
         }
         println!("  Hot tables: {}", report.hot_tables.len());
-        println!("  Index suggestions (column in WHERE, no index): {}", report.index_suggestions.len());
+        println!(
+            "  Index suggestions (column in WHERE, no index): {}",
+            report.index_suggestions.len()
+        );
         for s in report.index_suggestions.iter().take(5) {
-            println!("    - {}.{} (WHERE count: {})", s.qualified_table, s.column_name, s.in_where_count);
+            println!(
+                "    - {}.{} (WHERE count: {})",
+                s.qualified_table, s.column_name, s.in_where_count
+            );
         }
     }
 

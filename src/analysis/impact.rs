@@ -1,10 +1,10 @@
-//! Phase 3: Blast radius — impact of changing a table or column.
+//! Blast radius: impact of changing a table or column.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use petgraph::visit::IntoNeighbors;
 
-use crate::core::{DatabaseGraph, RawSchema, SchemaEdge, SchemaNode};
+use crate::core::{DatabaseGraph, FkGraph, RawSchema, SchemaNode};
 use crate::query_parser::parse_sql;
 
 /// Parsed impact target: schema.table or schema.table.column (column optional).
@@ -20,27 +20,34 @@ impl ImpactTarget {
         format!("{}.{}", self.schema, self.table)
     }
 
-    /// Parse "users", "users.email", "public.users", or "public.users.email". Default schema = "public".
-    /// With two segments: "public.users" is schema.table; "users.email" is table.column.
+    /// Parse "users", "users.email", "public.users", or "public.users.email".
+    /// Uses "public" as default schema. Prefer `parse_with_schema` when you have a RawSchema.
     pub fn parse(s: &str) -> Option<Self> {
+        Self::parse_with_default(s, "public")
+    }
+
+    /// Parse target with a caller-supplied default schema name.
+    /// Two-segment inputs like "foo.bar" are ambiguous: resolved by checking if the first
+    /// segment matches `default_schema`, treating it as schema.table if so, table.column otherwise.
+    pub fn parse_with_default(s: &str, default_schema: &str) -> Option<Self> {
         let s = s.trim();
         let parts: Vec<&str> = s.split('.').collect();
         match parts.len() {
             1 => Some(ImpactTarget {
-                schema: "public".to_string(),
+                schema: default_schema.to_string(),
                 table: parts[0].to_string(),
                 column: None,
             }),
             2 => {
-                if parts[0].eq_ignore_ascii_case("public") {
+                if parts[0].eq_ignore_ascii_case(default_schema) {
                     Some(ImpactTarget {
-                        schema: "public".to_string(),
+                        schema: parts[0].to_string(),
                         table: parts[1].to_string(),
                         column: None,
                     })
                 } else {
                     Some(ImpactTarget {
-                        schema: "public".to_string(),
+                        schema: default_schema.to_string(),
                         table: parts[0].to_string(),
                         column: Some(parts[1].to_string()),
                     })
@@ -81,32 +88,33 @@ pub struct ImpactReport {
     pub index_dependencies: Vec<String>,
     /// Number of queries in the log that reference the target (when query log provided).
     pub queries_affected_count: Option<usize>,
-    /// Simple impact score 0–1 (higher = larger blast radius).
+    /// Impact score 0-1 (higher = larger blast radius).
     pub risk_delta: f64,
     /// How risk_delta was computed (explainable).
     pub risk_breakdown: ImpactRiskBreakdown,
 }
 
 /// Compute blast radius: FK downstream (tables that reference us, recursively).
-fn fk_downstream(graph: &DatabaseGraph, table_idx: petgraph::graph::NodeIndex) -> Vec<String> {
-    let (fk_graph, old_to_new) = fk_table_graph_for_impact(graph);
-    let start_new = match old_to_new.get(&table_idx) {
+fn fk_downstream(
+    graph: &DatabaseGraph,
+    fk: &FkGraph,
+    table_idx: petgraph::graph::NodeIndex,
+) -> Vec<String> {
+    let start_new = match fk.old_to_new.get(&table_idx) {
         Some(&n) => n,
         None => return vec![],
     };
-    // Downstream = follow reversed edges (incoming FKs): who points to us?
-    let rev = petgraph::visit::Reversed(&fk_graph);
+    let rev = petgraph::visit::Reversed(&fk.graph);
     let mut visited = HashSet::new();
     let mut queue = VecDeque::new();
     queue.push_back(start_new);
     visited.insert(start_new);
-    let new_to_old: HashMap<_, _> = old_to_new.iter().map(|(k, v)| (*v, *k)).collect();
     let mut out = Vec::new();
     while let Some(n) = queue.pop_front() {
         for neighbor in rev.neighbors(n) {
             if visited.insert(neighbor) {
                 queue.push_back(neighbor);
-                if let Some(&old_idx) = new_to_old.get(&neighbor) {
+                if let Some(&old_idx) = fk.new_to_old.get(&neighbor) {
                     if let SchemaNode::Table(t) = &graph.graph[old_idx] {
                         out.push(t.qualified_name());
                     }
@@ -139,8 +147,10 @@ fn index_dependencies(raw: &RawSchema, target: &ImpactTarget) -> Vec<String> {
         .filter(|idx| {
             idx.schema_name == target.schema
                 && idx.table_name == target.table
-                && (target.column.is_none()
-                    || idx.column_names.iter().any(|c| c == target.column.as_ref().unwrap()))
+                && match target.column.as_ref() {
+                    Some(col) => idx.column_names.iter().any(|c| c == col),
+                    None => true,
+                }
         })
         .map(|idx| format!("{}.{}", idx.schema_name, idx.index_name))
         .collect()
@@ -156,12 +166,19 @@ pub fn count_queries_affected(queries: &[String], target: &ImpactTarget) -> usiz
                 Some(p) => p,
                 None => return false,
             };
-            if !parsed.tables.iter().any(|t| t.qualified_name() == qualified_table) {
+            if !parsed
+                .tables
+                .iter()
+                .any(|t| t.qualified_name() == qualified_table)
+            {
                 return false;
             }
             if let Some(ref col) = target.column {
-                parsed.columns.iter().any(|c| c.column == *col && c.table == target.table && c.schema == target.schema)
-                    || parsed.columns_in_where.iter().any(|c| c.column == *col && c.table == target.table && c.schema == target.schema)
+                parsed.columns.iter().any(|c| {
+                    c.column == *col && c.table == target.table && c.schema == target.schema
+                }) || parsed.columns_in_where.iter().any(|c| {
+                    c.column == *col && c.table == target.table && c.schema == target.schema
+                })
             } else {
                 true
             }
@@ -173,7 +190,7 @@ const IMPACT_FK_WEIGHT: f64 = 0.4;
 const IMPACT_INDEX_WEIGHT: f64 = 0.3;
 const IMPACT_QUERIES_WEIGHT: f64 = 0.3;
 
-/// Compute impact score 0–1 and explainable breakdown.
+/// Compute impact score 0-1 and explainable breakdown.
 fn impact_score(
     fk_downstream: usize,
     index_count: usize,
@@ -198,30 +215,6 @@ fn impact_score(
     (risk_delta, risk_breakdown)
 }
 
-/// Build the FK table graph (table nodes + FK edges).
-fn fk_table_graph_for_impact(
-    graph: &DatabaseGraph,
-) -> (petgraph::Graph<(), ()>, HashMap<petgraph::graph::NodeIndex, petgraph::graph::NodeIndex>) {
-    use petgraph::graph::Graph;
-    use petgraph::visit::EdgeRef;
-
-    let mut g: Graph<(), ()> = Graph::new();
-    let mut old_to_new: HashMap<petgraph::graph::NodeIndex, petgraph::graph::NodeIndex> = HashMap::new();
-    for &idx in &graph.table_node_list {
-        let new_idx = g.add_node(());
-        old_to_new.insert(idx, new_idx);
-    }
-    for edge in graph.graph.edge_references() {
-        let w = edge.weight();
-        if matches!(w, SchemaEdge::ForeignKey { .. }) {
-            if let (Some(&a), Some(&b)) = (old_to_new.get(&edge.source()), old_to_new.get(&edge.target())) {
-                g.add_edge(a, b, ());
-            }
-        }
-    }
-    (g, old_to_new)
-}
-
 /// Run full impact analysis.
 pub fn compute_impact(
     target: &ImpactTarget,
@@ -230,7 +223,8 @@ pub fn compute_impact(
     queries_affected_count: Option<usize>,
 ) -> Option<ImpactReport> {
     let table_idx = graph.table_index(&target.qualified_table())?;
-    let fk_downstream_tables = fk_downstream(graph, table_idx);
+    let fk = graph.build_fk_graph();
+    let fk_downstream_tables = fk_downstream(graph, &fk, table_idx);
     let fk_upstream_tables = fk_upstream(graph, table_idx);
     let index_dependencies = index_dependencies(raw, target);
     let (risk_delta, risk_breakdown) = impact_score(
@@ -257,22 +251,29 @@ mod tests {
     fn fixture_raw_schema() -> RawSchema {
         RawSchema {
             tables: vec![
-                TableMeta { schema_name: "public".into(), table_name: "users".into() },
-                TableMeta { schema_name: "public".into(), table_name: "posts".into() },
-                TableMeta { schema_name: "public".into(), table_name: "comments".into() },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "users".into(),
+                },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "posts".into(),
+                },
+                TableMeta {
+                    schema_name: "public".into(),
+                    table_name: "comments".into(),
+                },
             ],
             views: vec![],
             materialized_views: vec![],
             columns: vec![],
-            indexes: vec![
-                crate::core::IndexMeta {
-                    schema_name: "public".into(),
-                    table_name: "users".into(),
-                    index_name: "users_pkey".into(),
-                    column_names: vec!["id".into()],
-                    is_unique: true,
-                },
-            ],
+            indexes: vec![crate::core::IndexMeta {
+                schema_name: "public".into(),
+                table_name: "users".into(),
+                index_name: "users_pkey".into(),
+                column_names: vec!["id".into()],
+                is_unique: true,
+            }],
             constraints: vec![],
             foreign_keys: vec![
                 ForeignKeyRef {
@@ -328,18 +329,26 @@ mod tests {
         let target = ImpactTarget::parse("public.users").unwrap();
         assert_eq!(target.qualified_table(), "public.users");
         assert!(graph.table_index(&target.qualified_table()).is_some());
-        let report = compute_impact(&target, &graph, &raw, None)
-            .expect("public.users should be in graph");
-        assert!(report.fk_downstream_tables.contains(&"public.posts".to_string()));
-        assert!(report.fk_downstream_tables.contains(&"public.comments".to_string()));
+        let report =
+            compute_impact(&target, &graph, &raw, None).expect("public.users should be in graph");
+        assert!(report
+            .fk_downstream_tables
+            .contains(&"public.posts".to_string()));
+        assert!(report
+            .fk_downstream_tables
+            .contains(&"public.comments".to_string()));
         assert!(report.fk_upstream_tables.is_empty());
 
         // posts: downstream = comments; upstream = users
         let target = ImpactTarget::parse("public.posts").unwrap();
-        let report = compute_impact(&target, &graph, &raw, None)
-            .expect("public.posts should be in graph");
-        assert!(report.fk_downstream_tables.contains(&"public.comments".to_string()));
-        assert!(report.fk_upstream_tables.contains(&"public.users".to_string()));
+        let report =
+            compute_impact(&target, &graph, &raw, None).expect("public.posts should be in graph");
+        assert!(report
+            .fk_downstream_tables
+            .contains(&"public.comments".to_string()));
+        assert!(report
+            .fk_upstream_tables
+            .contains(&"public.users".to_string()));
     }
 
     #[test]
@@ -348,6 +357,9 @@ mod tests {
         let graph = DatabaseGraph::from_raw_schema(raw.clone());
         let target = ImpactTarget::parse("public.users.id").unwrap();
         let report = compute_impact(&target, &graph, &raw, None).unwrap();
-        assert!(report.index_dependencies.iter().any(|i| i.contains("users_pkey")));
+        assert!(report
+            .index_dependencies
+            .iter()
+            .any(|i| i.contains("users_pkey")));
     }
 }
