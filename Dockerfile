@@ -1,7 +1,8 @@
 FROM rust:1.85-slim AS builder
 
 WORKDIR /build
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
+COPY Cargo.lock* ./
 COPY src/ src/
 COPY benches/ benches/
 

@@ -5,9 +5,7 @@ use sqlx::mysql::MySqlPoolOptions;
 use sqlx::MySqlPool;
 
 use crate::connectors::connector::{Connector, ConnectorError};
-use crate::core::{
-    ColumnMeta, ConstraintMeta, ForeignKeyRef, IndexMeta, RawSchema, TableMeta,
-};
+use crate::core::{ColumnMeta, ConstraintMeta, ForeignKeyRef, IndexMeta, RawSchema, TableMeta};
 
 /// MySQL connector. Produces the same [RawSchema] as other engines.
 #[derive(Debug, Clone, Default)]
@@ -20,7 +18,9 @@ impl Connector for MysqlConnector {
     }
 
     async fn extract_schema(&self, connection_uri: &str) -> Result<RawSchema, ConnectorError> {
-        extract_schema(connection_uri).await.map_err(ConnectorError::Mysql)
+        extract_schema(connection_uri)
+            .await
+            .map_err(ConnectorError::Mysql)
     }
 }
 
@@ -33,6 +33,7 @@ pub async fn extract_schema(connection_uri: &str) -> Result<RawSchema, sqlx::Err
         .await?;
 
     let tables = fetch_tables(&pool).await?;
+    let views = fetch_views(&pool).await?;
     let columns = fetch_columns(&pool).await?;
     let indexes = fetch_indexes(&pool).await?;
     let constraints = fetch_constraints(&pool).await?;
@@ -41,7 +42,7 @@ pub async fn extract_schema(connection_uri: &str) -> Result<RawSchema, sqlx::Err
     pool.close().await;
     Ok(RawSchema {
         tables,
-        views: Vec::new(),
+        views,
         materialized_views: Vec::new(),
         columns,
         indexes,
@@ -53,7 +54,11 @@ pub async fn extract_schema(connection_uri: &str) -> Result<RawSchema, sqlx::Err
 }
 
 async fn fetch_tables(pool: &MySqlPool) -> Result<Vec<TableMeta>, sqlx::Error> {
-    let placeholders = EXCLUDED_SCHEMAS.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let placeholders = EXCLUDED_SCHEMAS
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
     let query = format!(
         r#"
         SELECT TABLE_SCHEMA, TABLE_NAME
@@ -78,38 +83,89 @@ async fn fetch_tables(pool: &MySqlPool) -> Result<Vec<TableMeta>, sqlx::Error> {
         .collect())
 }
 
-async fn fetch_columns(pool: &MySqlPool) -> Result<Vec<ColumnMeta>, sqlx::Error> {
-    let placeholders = EXCLUDED_SCHEMAS.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+async fn fetch_views(pool: &MySqlPool) -> Result<Vec<TableMeta>, sqlx::Error> {
+    let placeholders = EXCLUDED_SCHEMAS
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
     let query = format!(
         r#"
-        SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COALESCE(DATA_TYPE, ''), ORDINAL_POSITION
-        FROM information_schema.COLUMNS
+        SELECT TABLE_SCHEMA, TABLE_NAME
+        FROM information_schema.VIEWS
         WHERE TABLE_SCHEMA NOT IN ({})
-        ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
+        ORDER BY TABLE_SCHEMA, TABLE_NAME
         "#,
         placeholders
     );
-    let mut q = sqlx::query_as::<_, (String, String, String, String, i32)>(&query);
+    let mut q = sqlx::query_as::<_, (String, String)>(&query);
     for s in EXCLUDED_SCHEMAS {
         q = q.bind(*s);
     }
     let rows = q.fetch_all(pool).await?;
     Ok(rows
         .into_iter()
-        .map(|(schema_name, table_name, column_name, data_type, ordinal_position)| {
-            ColumnMeta {
+        .map(|(schema_name, table_name)| TableMeta {
+            schema_name,
+            table_name,
+        })
+        .collect())
+}
+
+async fn fetch_columns(pool: &MySqlPool) -> Result<Vec<ColumnMeta>, sqlx::Error> {
+    let placeholders = EXCLUDED_SCHEMAS
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
+    let query = format!(
+        r#"
+        SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COALESCE(DATA_TYPE, ''),
+               ORDINAL_POSITION, IS_NULLABLE, COLUMN_DEFAULT
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA NOT IN ({})
+        ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
+        "#,
+        placeholders
+    );
+    let mut q =
+        sqlx::query_as::<_, (String, String, String, String, i32, String, Option<String>)>(&query);
+    for s in EXCLUDED_SCHEMAS {
+        q = q.bind(*s);
+    }
+    let rows = q.fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
                 schema_name,
                 table_name,
                 column_name,
                 data_type,
                 ordinal_position,
-            }
-        })
+                is_nullable,
+                default_value,
+            )| {
+                ColumnMeta {
+                    schema_name,
+                    table_name,
+                    column_name,
+                    data_type,
+                    ordinal_position,
+                    is_nullable: Some(is_nullable == "YES"),
+                    default_value,
+                }
+            },
+        )
         .collect())
 }
 
 async fn fetch_indexes(pool: &MySqlPool) -> Result<Vec<IndexMeta>, sqlx::Error> {
-    let placeholders = EXCLUDED_SCHEMAS.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let placeholders = EXCLUDED_SCHEMAS
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
     let query = format!(
         r#"
         SELECT TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, MAX(NON_UNIQUE) = 0
@@ -144,10 +200,7 @@ async fn fetch_indexes(pool: &MySqlPool) -> Result<Vec<IndexMeta>, sqlx::Error> 
     let mut by_key: std::collections::HashMap<(String, String, String), Vec<String>> =
         std::collections::HashMap::new();
     for (schema, table, index, col) in col_rows {
-        by_key
-            .entry((schema, table, index))
-            .or_default()
-            .push(col);
+        by_key.entry((schema, table, index)).or_default().push(col);
     }
 
     let indexes = index_rows
@@ -169,7 +222,11 @@ async fn fetch_indexes(pool: &MySqlPool) -> Result<Vec<IndexMeta>, sqlx::Error> 
 }
 
 async fn fetch_constraints(pool: &MySqlPool) -> Result<Vec<ConstraintMeta>, sqlx::Error> {
-    let placeholders = EXCLUDED_SCHEMAS.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let placeholders = EXCLUDED_SCHEMAS
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
     let query = format!(
         r#"
         SELECT TABLE_SCHEMA, TABLE_NAME, CONSTRAINT_NAME, CONSTRAINT_TYPE
@@ -199,7 +256,11 @@ async fn fetch_constraints(pool: &MySqlPool) -> Result<Vec<ConstraintMeta>, sqlx
 }
 
 async fn fetch_foreign_keys(pool: &MySqlPool) -> Result<Vec<ForeignKeyRef>, sqlx::Error> {
-    let placeholders = EXCLUDED_SCHEMAS.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let placeholders = EXCLUDED_SCHEMAS
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
     let query = format!(
         r#"
         SELECT
@@ -217,35 +278,26 @@ async fn fetch_foreign_keys(pool: &MySqlPool) -> Result<Vec<ForeignKeyRef>, sqlx
         "#,
         placeholders
     );
-    let mut q = sqlx::query_as::<_, (
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-    )>(&query);
+    let mut q =
+        sqlx::query_as::<_, (String, String, String, String, String, String, String)>(&query);
     for s in EXCLUDED_SCHEMAS {
         q = q.bind(*s);
     }
     let rows = q.fetch_all(pool).await?;
 
     type FkKey = (String, String, String);
-    let mut by_constraint: std::collections::HashMap<
-        FkKey,
-        (String, String, String, Vec<String>, String, String, Vec<String>),
-    > = std::collections::HashMap::new();
-    for (
-        name,
-        from_schema,
-        from_table,
-        from_col,
-        to_schema,
-        to_table,
-        to_col,
-    ) in rows
-    {
+    type FkAccum = (
+        String,
+        String,
+        String,
+        Vec<String>,
+        String,
+        String,
+        Vec<String>,
+    );
+    let mut by_constraint: std::collections::HashMap<FkKey, FkAccum> =
+        std::collections::HashMap::new();
+    for (name, from_schema, from_table, from_col, to_schema, to_table, to_col) in rows {
         let key = (from_schema.clone(), from_table.clone(), name.clone());
         let entry = by_constraint.entry(key).or_insert_with(|| {
             (

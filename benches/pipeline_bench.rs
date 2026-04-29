@@ -28,6 +28,8 @@ fn large_raw_schema() -> core::RawSchema {
             column_name: "id".into(),
             data_type: "int4".into(),
             ordinal_position: 1,
+            is_nullable: Some(false),
+            default_value: None,
         });
         columns.push(core::ColumnMeta {
             schema_name: "public".into(),
@@ -35,6 +37,8 @@ fn large_raw_schema() -> core::RawSchema {
             column_name: "parent_id".into(),
             data_type: "int4".into(),
             ordinal_position: 2,
+            is_nullable: Some(true),
+            default_value: None,
         });
         columns.push(core::ColumnMeta {
             schema_name: "public".into(),
@@ -42,6 +46,8 @@ fn large_raw_schema() -> core::RawSchema {
             column_name: "name".into(),
             data_type: "text".into(),
             ordinal_position: 3,
+            is_nullable: Some(true),
+            default_value: None,
         });
         indexes.push(core::IndexMeta {
             schema_name: "public".into(),
@@ -89,6 +95,8 @@ fn large_raw_schema() -> core::RawSchema {
             column_name: "id".into(),
             data_type: "int4".into(),
             ordinal_position: 1,
+            is_nullable: Some(false),
+            default_value: None,
         });
     }
 
@@ -164,5 +172,10 @@ fn bench_full_pipeline(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_graph_build, bench_metrics, bench_full_pipeline);
+criterion_group!(
+    benches,
+    bench_graph_build,
+    bench_metrics,
+    bench_full_pipeline
+);
 criterion_main!(benches);

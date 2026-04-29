@@ -12,7 +12,6 @@ realworld-reports/
 
 # Rust
 /target/
-Cargo.lock
 
 # Local env and secrets (never commit real credentials)
 .env
