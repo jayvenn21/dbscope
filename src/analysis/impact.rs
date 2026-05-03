@@ -66,11 +66,11 @@ impl ImpactTarget {
 /// Explainable breakdown of impact (blast radius) score.
 #[derive(Debug, Clone)]
 pub struct ImpactRiskBreakdown {
-    /// FK downstream contribution (weight 0.4): more dependent tables → higher.
+    /// FK downstream contribution (weight 0.4): more dependent tables -> higher.
     pub fk_downstream_contrib: f64,
-    /// Index dependency contribution (weight 0.3): more indexes on target → higher.
+    /// Index dependency contribution (weight 0.3): more indexes on target -> higher.
     pub index_contrib: f64,
-    /// Queries affected contribution (weight 0.3): more queries touch target → higher.
+    /// Queries affected contribution (weight 0.3): more queries touch target -> higher.
     pub queries_contrib: f64,
     /// Human-readable formula.
     pub formula: String,
@@ -203,7 +203,7 @@ fn impact_score(
         .unwrap_or(0.0);
     let risk_delta = (fk_downstream_contrib + index_contrib + queries_contrib).min(1.0);
     let formula = format!(
-        "risk_delta = 0.4×FK_downstream({:.2}) + 0.3×index_deps({:.2}) + 0.3×queries_affected({:.2}) = {:.2}",
+        "risk_delta = 0.4*FK_downstream({:.2}) + 0.3*index_deps({:.2}) + 0.3*queries_affected({:.2}) = {:.2}",
         fk_downstream_contrib, index_contrib, queries_contrib, risk_delta
     );
     let risk_breakdown = ImpactRiskBreakdown {

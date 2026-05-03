@@ -54,7 +54,7 @@ pub async fn run_preview(
     let max_risk_after = metrics_after.iter().map(risk_for).fold(0.0_f64, f64::max);
     let risk_delta = max_risk_after - max_risk_before;
 
-    // Blast radius: removed ∪ downstream of each removed (from before graph)
+    // Blast radius: removed + downstream of each removed (from before graph)
     let mut impacted: HashSet<String> = removed.iter().cloned().collect();
     for table_name in &removed {
         if let Some(target) = ImpactTarget::parse(table_name) {
@@ -125,7 +125,7 @@ pub async fn run_preview(
     if max_risk_after > pol.max_table_risk {
         eprintln!("Policy:");
         eprintln!(
-            "  ❌ FAIL: max table risk {:.2} exceeds threshold {:.2}",
+            "  FAIL: max table risk {:.2} exceeds threshold {:.2}",
             max_risk_after, pol.max_table_risk
         );
         fail = true;
@@ -133,7 +133,7 @@ pub async fn run_preview(
     if pol.no_cycles && cycles_after > 0 {
         eprintln!("Policy:");
         eprintln!(
-            "  ❌ FAIL: schema has {} table(s) in cycles (no_cycles: true)",
+            "  FAIL: schema has {} table(s) in cycles (no_cycles: true)",
             cycles_after
         );
         fail = true;
@@ -143,7 +143,7 @@ pub async fn run_preview(
         if orphans_after > 0 {
             eprintln!("Policy:");
             eprintln!(
-                "  ❌ FAIL: schema has {} orphan(s) (no_orphans: true)",
+                "  FAIL: schema has {} orphan(s) (no_orphans: true)",
                 orphans_after
             );
             fail = true;
@@ -152,14 +152,14 @@ pub async fn run_preview(
     if blast_radius_percent > pol.max_blast_radius_percent {
         eprintln!("Policy:");
         eprintln!(
-            "  ❌ FAIL: blast radius {:.0}% exceeds max {:.0}%",
+            "  FAIL: blast radius {:.0}% exceeds max {:.0}%",
             blast_radius_percent, pol.max_blast_radius_percent
         );
         fail = true;
     }
     if !fail && (policy_path.is_some() || pol.max_table_risk < 1.0) {
         eprintln!("Policy:");
-        eprintln!("  ✅ PASS: within policy limits");
+        eprintln!("  PASS: within policy limits");
     }
 
     if fail {

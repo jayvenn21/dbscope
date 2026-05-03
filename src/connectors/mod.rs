@@ -10,10 +10,10 @@ pub use connector::{Connector, ConnectorError};
 use crate::core::RawSchema;
 
 /// Extract schema from any supported database URI. Dispatches by scheme:
-/// - `postgres://` / `postgresql://` → Postgres
-/// - `mysql://` → MySQL
-/// - `sqlite://` / `file://` (path ending in .db/.sqlite) → SQLite
-/// - `clickhouse://` → ClickHouse
+/// - `postgres://` / `postgresql://` -> Postgres
+/// - `mysql://` -> MySQL
+/// - `sqlite://` / `file://` (path ending in .db/.sqlite) -> SQLite
+/// - `clickhouse://` -> ClickHouse
 ///
 /// Wraps raw connection errors with actionable diagnostics.
 pub async fn extract_schema(connection_uri: &str) -> Result<RawSchema, ConnectorError> {

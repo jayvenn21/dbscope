@@ -1,9 +1,9 @@
-<h1 align="center" style="font-size: 2.5rem; letter-spacing: -0.02em;">
-  <span>dbscope</span>
-</h1>
+<p align="center">
+  <img src="dbscope-logo-cropped.png" width="65%" alt="dbscope logo">
+</p>
 
 <p align="center">
-  Understand your database before you touch it.
+  <strong>Understand your database before you touch it.</strong>
 </p>
 
 <p align="center">
@@ -12,7 +12,6 @@
   <img src="https://img.shields.io/badge/postgres-supported-blue" alt="Postgres">
   <img src="https://img.shields.io/badge/mysql-supported-blue" alt="MySQL">
   <img src="https://img.shields.io/badge/sqlite-supported-blue" alt="SQLite">
-  <img src="https://img.shields.io/badge/clickhouse-supported-blue" alt="ClickHouse">
   <img src="https://img.shields.io/badge/read--only-safe-success" alt="Read Only">
   <img src="https://img.shields.io/badge/risk-deterministic-purple" alt="Risk Model">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-lightgrey" alt="License">
@@ -21,7 +20,6 @@
 <p align="center">
   Read-only schema intelligence for SQL databases.<br>
   Graph-based risk scoring · Blast radius analysis · CI gating · Migration preview<br>
-  Schema diffing · Lint rules · Dependency trees · Snapshots<br>
   Deterministic. Offline. No telemetry.
 </p>
 
@@ -45,7 +43,7 @@ Schema migrations cause production outages. Circular foreign key dependencies hi
 
 Migration linters (squawk, Atlas, pgfence) tell you if your SQL is dangerous. **dbscope tells you which tables you shouldn't touch in the first place.**
 
-It connects to your database (read-only), builds a relational graph of every table, column, index, constraint, and foreign key, computes deterministic risk scores, and generates offline reports. Same schema, same query log, same scores, every time.
+It connects to your database (read-only), builds a relational graph of every table, column, index, constraint, and foreign key, computes deterministic risk scores, and generates offline reports. Same schema, same query log, same scores - every time.
 
 **Supports:** PostgreSQL · MySQL · SQLite · ClickHouse
 
@@ -59,29 +57,14 @@ It connects to your database (read-only), builds a relational graph of every tab
 
 ---
 
-## Install
-
-```bash
-# From crates.io
-cargo install dbscope
-
-# Homebrew (macOS/Linux)
-brew install jayvenn21/tap/dbscope
-
-# Docker
-docker run --rm ghcr.io/jayvenn21/dbscope analyze --schema <URI>
-
-# From source
-cargo install --path .
-```
-
----
-
 ## Quick Start
 
 ```bash
-# Try instantly, no database required
-dbscope demo
+# Install from source
+cargo install --path .
+
+# Or build locally
+cargo build --release
 
 # Set your connection URI
 export DBSCOPE_SCHEMA_URI="postgres://user:pass@localhost:5432/mydb"
@@ -92,14 +75,8 @@ dbscope analyze
 # Check blast radius of a specific table
 dbscope impact public.users
 
-# Detect anti-patterns
-dbscope lint
-
 # Get a plain-language summary
 dbscope summarize
-
-# Shell completions (add to your shell profile)
-dbscope completions zsh > ~/.zfunc/_dbscope
 ```
 
 **Reports:** `dbscope-report.html`, `dbscope-report.json`, `dbscope-report.md`, `dbscope-graph.dot`
@@ -142,8 +119,7 @@ dbscope analyze --schema <URI> --query-log <FILE>
 |--------|-------------|
 | `--schema` | Connection URI. Required unless `DBSCOPE_SCHEMA_URI` is set. |
 | `-o`, `--output` | Output directory for reports (default: current directory). |
-| `--query-log` | One SQL per line. Enables cold/hot tables, index suggestions. |
-| `--format` | Comma-separated report formats: `md,html,json,dot` (default: all). |
+| `--query-log` | One SQL per line - enables cold/hot tables, index suggestions. |
 
 ### impact
 
@@ -154,12 +130,11 @@ Blast radius for a table or column: downstream/upstream FKs, index coupling, aff
 ```bash
 dbscope impact <TARGET> --schema <URI>
 dbscope impact <TARGET> --schema <URI> --query-log <FILE>
-dbscope impact <TARGET> --schema <URI> --json
 ```
 
 ### plan
 
-Safe refactor plan for dropping a table: lists FKs to drop first, then the DROP TABLE step. Read-only; apply changes manually.
+Safe refactor plan for dropping a table: lists FKs to drop first, then the DROP TABLE step. Read-only - apply changes manually.
 
 ```bash
 dbscope plan drop public.users --schema <URI>
@@ -204,7 +179,6 @@ Table/column/FK counts, risk overview, orphans, cycles. With `--query-log`: cold
 ```bash
 dbscope summarize --schema <URI>
 dbscope summarize --schema <URI> --query-log <FILE>
-dbscope summarize --schema <URI> --json
 ```
 
 ### explain
@@ -215,100 +189,14 @@ Explain a risk score or index recommendation in plain language.
 
 ```bash
 dbscope explain risk <TABLE> --schema <URI>
-dbscope explain risk <TABLE> --schema <URI> --json
 dbscope explain index-suggestion <TABLE> <COLUMN> --schema <URI> --query-log <FILE>
 ```
-
-### demo
-
-Run a full analysis on an embedded e-commerce schema. No database required.
-
-```bash
-dbscope demo
-dbscope demo -o demo-reports
-```
-
-### snapshot
-
-Save the current schema to a JSON file for offline analysis, auditing, or diffing later.
-
-```bash
-dbscope snapshot --schema <URI> -o schema-2024-01-15.json
-```
-
-### diff
-
-Compare two schema snapshots, or a snapshot vs. a live database. Shows structural delta.
-
-```bash
-dbscope diff before.json after.json
-dbscope diff before.json postgres://user:pass@host/db
-dbscope diff before.json after.json --json
-```
-
-### lint
-
-Detect schema anti-patterns. Catches missing primary keys, wide tables, missing FK indexes, naming violations, nullable FKs, redundant indexes, and text columns that should be enums.
-
-```bash
-dbscope lint --schema <URI>
-dbscope lint --schema <URI> --json
-```
-
-### deps
-
-Show the full dependency tree for a table: what depends on it (downstream) and what it depends on (upstream).
-
-```bash
-dbscope deps public.users --schema <URI>
-dbscope deps public.users --schema <URI> --json
-```
-
-### completions
-
-Generate shell completions for bash, zsh, fish, or powershell.
-
-```bash
-dbscope completions zsh > ~/.zfunc/_dbscope
-dbscope completions bash > /etc/bash_completion.d/dbscope
-dbscope completions fish > ~/.config/fish/completions/dbscope.fish
-```
-
-### mcp
-
-Run as an MCP (Model Context Protocol) server for AI assistants. Exposes schema analysis tools over stdio.
-
-```json
-{
-  "mcpServers": {
-    "dbscope": {
-      "command": "dbscope",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-**Exposed tools:** `analyze_schema`, `explain_risk`, `impact`, `lint_schema`, `deps`, `diff_schemas`
-
-AI assistants can then ask dbscope to analyze schemas, explain risk, compute blast radius, and detect anti-patterns directly.
 
 ---
 
 ## CI Integration
 
-### GitHub Actions (3 lines)
-
-```yaml
-- name: Schema health check
-  uses: jayvenn21/dbscope/action@main
-  with:
-    schema: ${{ secrets.DATABASE_URL }}
-    command: ci
-    policy: dbscope.policy.yaml
-```
-
-Or manually:
+### GitHub Actions
 
 ```yaml
 - name: Schema health check
@@ -340,7 +228,7 @@ max_blast_radius_percent: 50
 
 ## Risk Model
 
-All scores are deterministic. Same schema + same query log = same scores. Full specification: **[docs/risk_model.md](docs/risk_model.md)**.
+All scores are deterministic - same schema + same query log = same scores. Full specification: **[docs/risk_model.md](docs/risk_model.md)**.
 
 ### Table Risk (structural)
 
@@ -357,7 +245,7 @@ risk = depth_contrib (max 0.4) + cycle_contrib (0.3 if in FK cycle) + centrality
 When connected to Postgres, risk is adjusted by live activity data from `pg_stat_user_tables`:
 
 ```
-effective_risk = structural_risk * operational_weight (0.2-1.0)
+effective_risk = structural_risk × operational_weight (0.2-1.0)
 ```
 
 ### Impact (blast radius)
@@ -379,10 +267,10 @@ impact = 0.4 × FK_reach + 0.3 × index_coupling + 0.3 × query_usage_weight
 
 Every `analyze` run generates four report formats:
 
-- **Markdown**: Human-readable summary
-- **HTML**: Static report with risk visualization
-- **JSON**: Machine-readable for pipelines and dashboards
-- **Graphviz**: Dependency graph (render with `dot -Tpng dbscope-graph.dot -o graph.png`)
+- **Markdown** - Human-readable summary
+- **HTML** - Static report with risk visualization
+- **JSON** - Machine-readable for pipelines and dashboards
+- **Graphviz** - Dependency graph (render with `dot -Tpng dbscope-graph.dot -o graph.png`)
 
 All reports are generated offline. No external services.
 
@@ -390,7 +278,7 @@ All reports are generated offline. No external services.
 
 ## Architecture
 
-dbscope builds a canonical relational graph from database metadata. Connectors normalize each engine's catalog into a universal `RawSchema` model. All analysis runs on this graph; the core never branches on database type.
+dbscope builds a canonical relational graph from database metadata. Connectors normalize each engine's catalog into a universal `RawSchema` model. All analysis runs on this graph - the core never branches on database type.
 
 ```
 Connector → RawSchema → DatabaseGraph → Analysis → Reports
@@ -409,25 +297,24 @@ Full architecture doc: **[docs/architecture.md](docs/architecture.md)**
 
 ## Philosophy
 
-- **Read-only**: dbscope never modifies your database
-- **Deterministic**: Same input, same output, every time
-- **Explainable**: Every score has a documented formula
-- **CLI-first**: Works in your terminal and CI pipeline
-- **Machine-friendly**: `--json` output for analysis commands, structured exit codes
-- **Offline**: No external services, no network calls
-- **No telemetry**: Nothing leaves your machine
+- **Read-only** - dbscope never modifies your database
+- **Deterministic** - Same input, same output, every time
+- **Explainable** - Every score has a documented formula
+- **CLI-first** - Works in your terminal and CI pipeline
+- **Offline** - No external services, no network calls
+- **No telemetry** - Nothing leaves your machine
 
 ---
 
 ## Documentation
 
-- **[Risk Model](docs/risk_model.md)**: Full scoring specification
-- **[Architecture](docs/architecture.md)**: Universal model, connectors, pipeline
-- **[Cloud](docs/cloud.md)**: dbscope Cloud product vision
-- **[Positioning](docs/positioning.md)**: How dbscope compares to migration linters
-- **[Contributing](CONTRIBUTING.md)**: Guidelines for contributors
-- **[Changelog](CHANGELOG.md)**: Release history
-- **[Security](SECURITY.md)**: Vulnerability reporting
+- **[Risk Model](docs/risk_model.md)** - Full scoring specification
+- **[Architecture](docs/architecture.md)** - Universal model, connectors, pipeline
+- **[Cloud](docs/cloud.md)** - dbscope Cloud product vision
+- **[Positioning](docs/positioning.md)** - How dbscope compares to migration linters
+- **[Contributing](CONTRIBUTING.md)** - Guidelines for contributors
+- **[Changelog](CHANGELOG.md)** - Release history
+- **[Security](SECURITY.md)** - Vulnerability reporting
 
 ---
 

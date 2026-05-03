@@ -44,11 +44,7 @@ pub fn lint_schema(raw: &RawSchema) -> Vec<LintViolation> {
     check_redundant_indexes(raw, &mut violations);
     check_untyped_text_columns(raw, &mut violations);
 
-    violations.sort_by(|a, b| {
-        severity_ord(a.severity)
-            .cmp(&severity_ord(b.severity))
-            .then(a.table.cmp(&b.table))
-    });
+    violations.sort_by_key(|v| (severity_ord(v.severity), v.table.clone()));
 
     violations
 }

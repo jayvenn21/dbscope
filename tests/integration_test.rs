@@ -1,4 +1,4 @@
-//! Integration test: fixture schema → graph → metrics → markdown + HTML reports.
+//! Integration test: fixture schema -> graph -> metrics -> markdown + HTML reports.
 //! No database required.
 
 use dbscope::analysis;
@@ -157,7 +157,10 @@ fn realworld_schema_pipeline() {
     let orphans: Vec<_> = metrics.iter().filter(|m| m.is_orphan).collect();
     assert!(orphans.len() >= 3, "at least 3 orphan tables");
     let in_cycle: Vec<_> = metrics.iter().filter(|m| m.in_cycle).collect();
-    assert!(!in_cycle.is_empty(), "cycle t0→t2→t1→t0 should be detected");
+    assert!(
+        !in_cycle.is_empty(),
+        "cycle t0->t2->t1->t0 should be detected"
+    );
 
     let total_tables = raw.tables.len();
     let total_columns = raw.columns.len();
@@ -327,7 +330,7 @@ fn phase3_impact_report() {
     let raw = fixture_raw_schema();
     let graph = core::DatabaseGraph::from_raw_schema(raw.clone());
 
-    // Impact on users: posts references users via FK → downstream = [public.posts]
+    // Impact on users: posts references users via FK -> downstream = [public.posts]
     let target = analysis::ImpactTarget::parse("public.users").unwrap();
     assert_eq!(target.qualified_table(), "public.users");
     let report = analysis::compute_impact(&target, &graph, &raw, None)
@@ -340,7 +343,7 @@ fn phase3_impact_report() {
     );
     assert!(report.fk_upstream_tables.is_empty());
 
-    // Impact on posts: references users → upstream = [public.users]; no tables reference posts
+    // Impact on posts: references users -> upstream = [public.users]; no tables reference posts
     let target = analysis::ImpactTarget::parse("public.posts").unwrap();
     let report = analysis::compute_impact(&target, &graph, &raw, None)
         .expect("public.posts should be in graph");

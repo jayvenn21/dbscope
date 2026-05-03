@@ -171,7 +171,7 @@ fn risk_score_with_breakdown(
                 depth_contrib: 0.0,
                 cycle_contrib: 0.0,
                 centrality_contrib: 0.0,
-                formula: "orphan (no FK in/out) → risk = 0".to_string(),
+                formula: "orphan (no FK in/out) -> risk = 0".to_string(),
             }),
         );
     }
