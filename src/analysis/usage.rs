@@ -82,7 +82,7 @@ pub fn compute_usage_report(
             query_count: *count,
         })
         .collect();
-    hot_tables.sort_by(|a, b| b.query_count.cmp(&a.query_count));
+    hot_tables.sort_by_key(|h| std::cmp::Reverse(h.query_count));
 
     for t in &raw.tables {
         let q = t.qualified_name();
@@ -116,7 +116,7 @@ pub fn compute_usage_report(
             });
         }
     }
-    index_suggestions.sort_by(|a, b| b.in_where_count.cmp(&a.in_where_count));
+    index_suggestions.sort_by_key(|s| std::cmp::Reverse(s.in_where_count));
 
     let mut join_hotspots: Vec<JoinHotspot> = usage
         .join_pairs
@@ -127,7 +127,7 @@ pub fn compute_usage_report(
             join_count: *count,
         })
         .collect::<Vec<_>>();
-    join_hotspots.sort_by(|a, b| b.join_count.cmp(&a.join_count));
+    join_hotspots.sort_by_key(|j| std::cmp::Reverse(j.join_count));
 
     UsageReport {
         cold_tables,

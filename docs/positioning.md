@@ -4,8 +4,8 @@
 
 The database tooling ecosystem has two distinct layers:
 
-1. **Migration linters**: Analyze SQL migration files for dangerous DDL patterns (missing `CONCURRENTLY`, lock mode risks, type rewrites)
-2. **Schema intelligence**: Analyze the live database schema for structural risk (FK topology, cycles, centrality, blast radius)
+1. **Migration linters** - Analyze SQL migration files for dangerous DDL patterns (missing `CONCURRENTLY`, lock mode risks, type rewrites)
+2. **Schema intelligence** - Analyze the live database schema for structural risk (FK topology, cycles, centrality, blast radius)
 
 Most tools in the market are migration linters. dbscope is the only tool that does schema intelligence with a graph-based risk model.
 
@@ -61,14 +61,14 @@ dbscope is not competing with migration linters. It is the structural intelligen
 
 ## What Only dbscope Does
 
-1. **Graph-based risk model**: Builds a petgraph of your entire schema. Computes FK depth, cycle detection, centrality, and transitive reach. No other tool does this.
+1. **Graph-based risk model** - Builds a petgraph of your entire schema. Computes FK depth, cycle detection, centrality, and transitive reach. No other tool does this.
 
-2. **Multi-database**: PostgreSQL, MySQL, SQLite, ClickHouse through a universal connector interface. Every competitor is PostgreSQL-only.
+2. **Multi-database** - PostgreSQL, MySQL, SQLite, ClickHouse through a universal connector interface. Every competitor is PostgreSQL-only.
 
-3. **Operational weighting**: Multiplies structural risk by live `pg_stat_user_tables` data (row counts, insert/update/delete activity). Combines static and dynamic analysis.
+3. **Operational weighting** - Multiplies structural risk by live `pg_stat_user_tables` data (row counts, insert/update/delete activity). Combines static and dynamic analysis.
 
-4. **Migration simulation with risk delta**: `dbscope preview` doesn't just say "this DDL is dangerous." It shows how the entire risk profile of your schema changes.
+4. **Migration simulation with risk delta** - `dbscope preview` doesn't just say "this DDL is dangerous." It shows how the entire risk profile of your schema changes.
 
-5. **Deterministic, explainable scoring**: Every score has a documented formula. No heuristics, no AI, no probabilistic analysis. Same schema = same score.
+5. **Deterministic, explainable scoring** - Every score has a documented formula. No heuristics, no AI, no probabilistic analysis. Same schema = same score.
 
-6. **Policy engine**: Define organizational risk thresholds in YAML. Enforce in CI and migration preview.
+6. **Policy engine** - Define organizational risk thresholds in YAML. Enforce in CI and migration preview.

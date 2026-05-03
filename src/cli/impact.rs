@@ -94,7 +94,7 @@ pub async fn run_impact(
         report.fk_downstream_tables.len()
     );
     for t in &report.fk_downstream_tables {
-        eprintln!("      • {}", t);
+        eprintln!("      - {}", t);
     }
     if let Some(n) = report.queries_affected_count {
         eprintln!("    - Break {} observed query/queries (from log)", n);

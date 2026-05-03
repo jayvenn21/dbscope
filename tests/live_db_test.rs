@@ -177,54 +177,45 @@ async fn setup_postgres(uri: &str) {
         .await
         .expect("connect to Postgres");
 
-    sqlx::query(
-        "
-        DROP TABLE IF EXISTS audit_log CASCADE;
-        DROP TABLE IF EXISTS comments CASCADE;
-        DROP TABLE IF EXISTS posts CASCADE;
-        DROP TABLE IF EXISTS users CASCADE;
-        ",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    sqlx::query(
-        "
-        CREATE TABLE users (
+    let stmts = [
+        "DROP TABLE IF EXISTS audit_log CASCADE",
+        "DROP TABLE IF EXISTS comments CASCADE",
+        "DROP TABLE IF EXISTS posts CASCADE",
+        "DROP TABLE IF EXISTS users CASCADE",
+        "CREATE TABLE users (
             id SERIAL PRIMARY KEY,
             email VARCHAR(255) NOT NULL UNIQUE,
             name VARCHAR(100),
             created_at TIMESTAMP DEFAULT NOW()
-        );
-        CREATE TABLE posts (
+        )",
+        "CREATE TABLE posts (
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES users(id),
             title VARCHAR(255) NOT NULL,
             body TEXT,
             published_at TIMESTAMP
-        );
-        CREATE TABLE comments (
+        )",
+        "CREATE TABLE comments (
             id SERIAL PRIMARY KEY,
             post_id INTEGER NOT NULL REFERENCES posts(id),
             user_id INTEGER NOT NULL REFERENCES users(id),
             body TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT NOW()
-        );
-        CREATE TABLE audit_log (
+        )",
+        "CREATE TABLE audit_log (
             event_id BIGINT,
             table_name VARCHAR(100),
             action VARCHAR(20),
             payload JSONB,
             created_at TIMESTAMP DEFAULT NOW()
-        );
-        CREATE INDEX idx_posts_user_id ON posts(user_id);
-        CREATE INDEX idx_comments_post_id ON comments(post_id);
-        ",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+        )",
+        "CREATE INDEX idx_posts_user_id ON posts(user_id)",
+        "CREATE INDEX idx_comments_post_id ON comments(post_id)",
+    ];
+
+    for sql in stmts {
+        sqlx::query(sql).execute(&pool).await.unwrap();
+    }
 
     pool.close().await;
 }

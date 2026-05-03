@@ -1,4 +1,4 @@
-//! Benchmarks for the analysis pipeline: RawSchema → graph → metrics → reports.
+//! Benchmarks for the analysis pipeline: RawSchema -> graph -> metrics -> reports.
 //! No database required; uses a programmatically built "real-world-style" schema.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};

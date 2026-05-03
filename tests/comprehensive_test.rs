@@ -189,7 +189,7 @@ fn ecommerce_fixture() -> core::RawSchema {
     }
 }
 
-// ── Lint tests ──────────────────────────────────────────────────────────
+// -- Lint tests-----------------------------------------------------------
 
 #[test]
 fn lint_detects_missing_fk_indexes() {
@@ -271,7 +271,7 @@ fn lint_clean_schema_no_errors() {
     );
 }
 
-// ── Diff tests ──────────────────────────────────────────────────────────
+// -- Diff tests-----------------------------------------------------------
 
 #[test]
 fn diff_detects_added_table() {
@@ -340,7 +340,7 @@ fn diff_no_changes() {
     assert!(diff.summary.risk_assessment.contains("No changes"));
 }
 
-// ── Snapshot tests ──────────────────────────────────────────────────────
+// -- Snapshot tests-------------------------------------------------------
 
 #[test]
 fn snapshot_roundtrip() {
@@ -365,7 +365,7 @@ fn snapshot_different_uris_different_hashes() {
     assert_ne!(snap_a.source_uri_hash, snap_b.source_uri_hash);
 }
 
-// ── Demo tests ──────────────────────────────────────────────────────────
+// -- Demo tests-----------------------------------------------------------
 
 #[test]
 fn demo_runs_without_error() {
@@ -378,7 +378,7 @@ fn demo_runs_without_error() {
     std::fs::remove_dir_all(&tmp_dir).ok();
 }
 
-// ── Migration operation tests ───────────────────────────────────────────
+// -- Migration operation tests--------------------------------------------
 
 #[test]
 fn migration_alter_add_column() {
@@ -472,7 +472,7 @@ fn migration_drop_table_removes_fks() {
     );
 }
 
-// ── JSON roundtrip tests ────────────────────────────────────────────────
+// -- JSON roundtrip tests-------------------------------------------------
 
 #[test]
 fn raw_schema_json_roundtrip() {
@@ -499,7 +499,7 @@ fn table_metrics_json_roundtrip() {
     }
 }
 
-// ── Policy validation tests ─────────────────────────────────────────────
+// -- Policy validation tests----------------------------------------------
 
 #[test]
 fn policy_default_values() {
@@ -536,7 +536,7 @@ fn policy_validate_passes_good_values() {
     assert!(warnings.is_empty());
 }
 
-// ── Deps tree tests ─────────────────────────────────────────────────────
+// -- Deps tree tests------------------------------------------------------
 
 #[test]
 fn deps_tree_structure() {
@@ -576,7 +576,7 @@ fn deps_tree_nonexistent_returns_none() {
     assert!(cli::deps::build_dep_tree(&graph, "public.nonexistent").is_none());
 }
 
-// ── Query parser multi-dialect tests ────────────────────────────────────
+// -- Query parser multi-dialect tests-------------------------------------
 
 #[test]
 fn parse_mysql_style_query() {
@@ -616,7 +616,7 @@ fn parse_update_with_where() {
     assert!(!q.columns_in_where.is_empty());
 }
 
-// ── Impact edge case tests ──────────────────────────────────────────────
+// -- Impact edge case tests-----------------------------------------------
 
 #[test]
 fn impact_on_orphan_table() {
@@ -645,7 +645,7 @@ fn impact_with_query_count() {
     );
 }
 
-// ── Metrics edge case tests ─────────────────────────────────────────────
+// -- Metrics edge case tests----------------------------------------------
 
 #[test]
 fn metrics_empty_schema() {

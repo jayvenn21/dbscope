@@ -249,7 +249,7 @@ fn print_diff(diff: &SchemaDiff) {
         println!("  Column type changes (BREAKING):");
         for c in &diff.columns_type_changed {
             println!(
-                "    ~ {}.{}: {} → {}",
+                "    ~ {}.{}: {} -> {}",
                 c.table, c.column, c.old_type, c.new_type
             );
         }
