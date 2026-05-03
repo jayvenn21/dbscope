@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability in dbscope, please report it responsibly.
 
-**Email:** security@dbscope.dev
+Open a GitHub issue at https://github.com/jayvenn21/dbscope/issues with the label `security`.
 
 Please include:
 
@@ -12,8 +12,6 @@ Please include:
 - Steps to reproduce
 - Potential impact
 - Suggested fix (if any)
-
-We will acknowledge receipt within 48 hours and aim to provide a fix or mitigation within 7 days for critical issues.
 
 ## Scope
 
@@ -30,8 +28,8 @@ dbscope does not:
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | Yes       |
+| 0.2.x   | Yes       |
 
 ## Disclosure Policy
 
-We follow coordinated disclosure. Please do not open a public GitHub issue for security vulnerabilities. Use the email above.
+For critical vulnerabilities, use a private GitHub issue or reach out via the repository's contact options.

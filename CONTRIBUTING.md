@@ -60,7 +60,7 @@ PRs should include:
 - Reasoning for scoring or metric changes
 - Performance impact notes (if relevant)
 
-Breaking changes should target a minor version bump (e.g., v0.2.0 → v0.3.0).
+Breaking changes should target a minor version bump (e.g., v0.2.x -> v0.3.0).
 
 ---
 
