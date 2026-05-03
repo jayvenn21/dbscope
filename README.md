@@ -1,9 +1,7 @@
-<p align="center">
-  <img src="dbscope-logo-cropped.png" width="65%" alt="dbscope logo">
-</p>
+<h1 align="center">dbscope</h1>
 
 <p align="center">
-  <strong>Understand your database before you touch it.</strong>
+  Understand your database before you touch it.
 </p>
 
 <p align="center">
