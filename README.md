@@ -23,14 +23,13 @@
 
 <p align="center">
   <a href="#the-problem">Problem</a> ·
-  <a href="#quick-start">Quick Start</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#example">Example</a> ·
   <a href="#commands">Commands</a> ·
   <a href="#risk-model">Risk Model</a> ·
   <a href="#how-dbscope-is-different">How It's Different</a> ·
-  <a href="#reports">Reports</a> ·
   <a href="#ci-integration">CI</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="docs/cloud.md">Cloud</a>
+  <a href="#architecture">Architecture</a>
 </p>
 
 ---
@@ -47,34 +46,72 @@ It connects to your database (read-only), builds a relational graph of every tab
 
 ---
 
-## Example
+## Install
 
-<p align="center">
-  <img src="dbscope.gif" width="850" alt="Terminal demo: analyze, impact, ci">
-</p>
+```bash
+cargo install dbscope
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/jayvenn21/dbscope.git
+cd dbscope
+cargo build --release
+```
 
 ---
 
-## Quick Start
+## Example
+
+No database needed. Run the built-in demo to see what dbscope does:
+
+```
+$ dbscope demo
+
+  Schema
+    tables    17  (2 orphans: feature_flags, schema_migrations)
+    columns   75
+    indexes   13
+    FKs       17  (self-ref: categories.parent_id)
+    queries   23 analyzed
+
+  Risk
+    0 critical  0 high  0 medium  3 orphans
+
+  Top Risk
+    public.products                0.10 (Low)
+    public.users                   0.10 (Low)
+    public.orders                  0.10 (Low)
+    public.reviews                 0.06 (Low)
+    public.categories              0.05 (Low)
+
+  Missing Indexes
+    public.reviews.product_id  3 WHERE hits
+    public.inventory.product_id  2 WHERE hits
+
+  Cold Tables
+    public.addresses
+    public.wishlist_items
+    public.coupons
+
+  Reports
+    ./dbscope-report.html  open in browser
+    ./dbscope-report.json  machine-readable
+    ./dbscope-graph.dot    render with: dot -Tsvg ... -o graph.svg
+```
+
+Point it at a real database:
 
 ```bash
-# Install from source
-cargo install --path .
-
-# Or build locally
-cargo build --release
-
-# Set your connection URI
 export DBSCOPE_SCHEMA_URI="postgres://user:pass@localhost:5432/mydb"
 
-# Analyze your schema
-dbscope analyze
-
-# Check blast radius of a specific table
-dbscope impact public.users
-
-# Get a plain-language summary
-dbscope summarize
+dbscope analyze                          # full schema analysis + reports
+dbscope impact public.users              # blast radius of a single table
+dbscope impact public.users.email        # blast radius of a single column
+dbscope ci --threshold 0.5               # fail if any table risk > 0.5
+dbscope summarize                        # plain-language overview
+dbscope plan drop public.legacy_orders   # safe drop plan with FK ordering
 ```
 
 **Reports:** `dbscope-report.html`, `dbscope-report.json`, `dbscope-report.md`, `dbscope-graph.dot`
