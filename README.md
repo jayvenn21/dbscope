@@ -1,7 +1,7 @@
 <h1 align="center">dbscope</h1>
 
 <p align="center">
-  Understand your database before you touch it.
+  <strong>Understand your database before you touch it.</strong>
 </p>
 
 <p align="center">
@@ -10,6 +10,7 @@
   <img src="https://img.shields.io/badge/postgres-supported-blue" alt="Postgres">
   <img src="https://img.shields.io/badge/mysql-supported-blue" alt="MySQL">
   <img src="https://img.shields.io/badge/sqlite-supported-blue" alt="SQLite">
+  <img src="https://img.shields.io/badge/clickhouse-supported-blue" alt="ClickHouse">
   <img src="https://img.shields.io/badge/read--only-safe-success" alt="Read Only">
   <img src="https://img.shields.io/badge/risk-deterministic-purple" alt="Risk Model">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-lightgrey" alt="License">
@@ -50,6 +51,12 @@ It connects to your database (read-only), builds a relational graph of every tab
 
 ```bash
 cargo install dbscope
+```
+
+Or with Homebrew:
+
+```bash
+brew install jayvenn21/tap/dbscope
 ```
 
 Or build from source:
@@ -109,14 +116,12 @@ export DBSCOPE_SCHEMA_URI="postgres://user:pass@localhost:5432/mydb"
 dbscope analyze                          # full schema analysis + reports
 dbscope impact public.users              # blast radius of a single table
 dbscope impact public.users.email        # blast radius of a single column
-dbscope ci --threshold 0.5               # fail if any table risk > 0.5
+dbscope ci --threshold 0.5              # fail if any table risk > 0.5
 dbscope summarize                        # plain-language overview
 dbscope plan drop public.legacy_orders   # safe drop plan with FK ordering
 ```
 
-**Reports:** `dbscope-report.html`, `dbscope-report.json`, `dbscope-report.md`, `dbscope-graph.dot`
-
-Use `-o DIR` to set output directory.
+**Reports:** `dbscope-report.html`, `dbscope-report.json`, `dbscope-report.md`, `dbscope-graph.dot` - use `-o DIR` to set output directory.
 
 ---
 
@@ -203,7 +208,7 @@ dbscope ci --schema <URI> --policy dbscope.policy.yaml
 
 | Option | Description |
 |--------|-------------|
-| `--threshold` | Fail if any table risk > this (0-1). Default: 0.5. Ignored if `--policy` is set. |
+| `--threshold` | Fail if any table risk > this (0–1). Default: 0.5. Ignored if `--policy` is set. |
 | `--migration` | DDL file to simulate before checking risk. |
 | `--policy` | YAML policy: `max_table_risk`, `no_cycles`, `no_orphans`, `max_blast_radius_percent`. |
 
@@ -225,6 +230,69 @@ Explain a risk score or index recommendation in plain language.
 ```bash
 dbscope explain risk <TABLE> --schema <URI>
 dbscope explain index-suggestion <TABLE> <COLUMN> --schema <URI> --query-log <FILE>
+```
+
+### demo
+
+Run a demo analysis on an embedded e-commerce schema - no database required. Great for trying dbscope without a connection.
+
+```bash
+dbscope demo
+dbscope demo -o demo-reports/
+```
+
+### snapshot
+
+Save the current schema to a JSON file for offline auditing or diffing later.
+
+```bash
+dbscope snapshot --schema <URI>
+dbscope snapshot --schema <URI> -o schema-2026-05-05.json
+```
+
+### diff
+
+Compare two schema snapshots, or compare a snapshot against a live database. Shows structural delta: tables added/removed, columns changed, FKs modified.
+
+```bash
+dbscope diff before.json after.json
+dbscope diff before.json postgres://user:pass@localhost/mydb
+```
+
+### lint
+
+Detect schema anti-patterns: missing primary keys, wide tables, missing FK indexes, naming inconsistencies.
+
+```bash
+dbscope lint --schema <URI>
+dbscope lint --schema <URI> --json
+```
+
+### deps
+
+Show the full FK dependency tree for a table - upstream (what it references) and downstream (what references it).
+
+```bash
+dbscope deps users --schema <URI>
+dbscope deps public.orders --schema <URI> --json
+```
+
+### mcp
+
+Run dbscope as an MCP (Model Context Protocol) server over stdio. Exposes schema analysis as tools for AI assistants like Claude, Cursor, and Copilot.
+
+```bash
+dbscope mcp
+```
+
+### completions
+
+Generate shell completions for your shell.
+
+```bash
+dbscope completions bash >> ~/.bashrc
+dbscope completions zsh >> ~/.zshrc
+dbscope completions fish > ~/.config/fish/completions/dbscope.fish
 ```
 
 ---
@@ -280,7 +348,7 @@ risk = depth_contrib (max 0.4) + cycle_contrib (0.3 if in FK cycle) + centrality
 When connected to Postgres, risk is adjusted by live activity data from `pg_stat_user_tables`:
 
 ```
-effective_risk = structural_risk × operational_weight (0.2-1.0)
+effective_risk = structural_risk × operational_weight (0.2–1.0)
 ```
 
 ### Impact (blast radius)
@@ -291,10 +359,10 @@ impact = 0.4 × FK_reach + 0.3 × index_coupling + 0.3 × query_usage_weight
 
 | Score | Level | Meaning |
 |-------|-------|---------|
-| 0.75-1.0 | **Critical** | Very central, deep in FK chains, and/or in a cycle |
-| 0.50-0.75 | **High** | Significant centrality or depth |
-| 0.25-0.50 | **Moderate** | Some dependency depth or centrality |
-| 0-0.25 | **Low** | Few dependencies, shallow in graph |
+| 0.75–1.0 | **Critical** | Very central, deep in FK chains, and/or in a cycle |
+| 0.50–0.75 | **High** | Significant centrality or depth |
+| 0.25–0.50 | **Moderate** | Some dependency depth or centrality |
+| 0–0.25 | **Low** | Few dependencies, shallow in graph |
 
 ---
 
