@@ -413,7 +413,6 @@ Full architecture doc: **[docs/architecture.md](docs/architecture.md)**
 
 - **[Risk Model](docs/risk_model.md)** - Full scoring specification
 - **[Architecture](docs/architecture.md)** - Universal model, connectors, pipeline
-- **[Cloud](docs/cloud.md)** - dbscope Cloud product vision
 - **[Positioning](docs/positioning.md)** - How dbscope compares to migration linters
 - **[Contributing](CONTRIBUTING.md)** - Guidelines for contributors
 - **[Changelog](CHANGELOG.md)** - Release history
